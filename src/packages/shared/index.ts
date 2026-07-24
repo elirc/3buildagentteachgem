@@ -75,6 +75,119 @@ export function canPerformAction(role: string, action: string): boolean {
   }
 }
 
+/* ------------------------------------------------------------------------- *
+ * JSON column helpers
+ *
+ * Several columns in this schema store structured data as a JSON *string*
+ * (scheduleJSON, subjectsJSON, payloadJSON, ...). SQLite has no JSON column
+ * type, so the database cannot validate any of it — a row can legally contain
+ * "null", "{}", "not json at all", or an array of the wrong shape.
+ *
+ * That makes parsing a trust boundary. Every parser below returns an empty
+ * array rather than throwing, because a malformed schedule on one section must
+ * never take down the whole sections page.
+ * ------------------------------------------------------------------------- */
+
+export interface ScheduleSlot {
+  day: string;
+  time: string;
+}
+
+const DAY_ABBREVIATIONS: Record<string, string> = {
+  monday: 'Mon',
+  tuesday: 'Tue',
+  wednesday: 'Wed',
+  thursday: 'Thu',
+  friday: 'Fri',
+  saturday: 'Sat',
+  sunday: 'Sun',
+};
+
+export const SCHEDULE_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+
+/**
+ * Parses a ClassSection.scheduleJSON string into slots.
+ * Returns [] for null, empty, malformed, or wrongly-shaped input.
+ */
+export function parseSchedule(json: string | null | undefined): ScheduleSlot[] {
+  if (!json) return [];
+
+  try {
+    const parsed = JSON.parse(json);
+
+    // JSON.parse('"hello"') succeeds and returns a string, and JSON.parse('{}')
+    // returns an object. Neither is iterable in the way we need, so check the
+    // shape rather than trusting that parsing succeeded.
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter((slot): slot is ScheduleSlot =>
+        slot !== null &&
+        typeof slot === 'object' &&
+        typeof slot.day === 'string' &&
+        typeof slot.time === 'string'
+      )
+      .map((slot) => ({ day: slot.day, time: slot.time }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Parses a Teacher.subjectsJSON string into a list of subject tags.
+ */
+export function parseSubjects(json: string | null | undefined): string[] {
+  if (!json) return [];
+
+  try {
+    const parsed = JSON.parse(json);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter((s): s is string => typeof s === 'string')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Renders slots for display: "Mon 10:00-11:30 · Wed 10:00-11:30".
+ */
+export function formatSchedule(slots: ScheduleSlot[]): string {
+  if (slots.length === 0) return 'Not scheduled';
+
+  return slots
+    .map((slot) => `${DAY_ABBREVIATIONS[slot.day.toLowerCase()] ?? slot.day} ${slot.time}`)
+    .join(' · ');
+}
+
+/**
+ * Turns a comma-separated form field into the JSON string the column expects.
+ */
+export function serializeSubjects(raw: string | null | undefined): string {
+  if (!raw) return JSON.stringify([]);
+
+  const subjects = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  return JSON.stringify(subjects);
+}
+
+/**
+ * Builds scheduleJSON from paired day/time form fields, dropping incomplete rows.
+ */
+export function serializeSchedule(pairs: Array<{ day: string | null; time: string | null }>): string {
+  const slots = pairs
+    .filter((p) => p.day && p.time && p.day.trim() && p.time.trim())
+    .map((p) => ({ day: (p.day as string).trim(), time: (p.time as string).trim() }));
+
+  return JSON.stringify(slots);
+}
+
 /**
  * Beautifully formats a Date object or string for display in UI grids and reports.
  */

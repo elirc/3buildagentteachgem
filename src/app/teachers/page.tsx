@@ -1,7 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
-import { formatDate } from '@/shared';
+import { formatDate, parseSubjects, serializeSubjects } from '@/shared';
 import { calculateTeacherWorkload } from '@/domain/rules/workload';
 import { calculateSectionGrade } from '@/domain/rules/grades';
 import { recordAuditEvent } from '@/observability/audit';
@@ -23,6 +23,7 @@ export default async function TeachersListPage() {
     const email = formData.get('email') as string;
     const department = formData.get('department') as string;
     const officeLocation = formData.get('officeLocation') as string;
+    const subjects = formData.get('subjects') as string | null;
 
     const teacher = await db.teacher.create({
       data: {
@@ -31,7 +32,7 @@ export default async function TeachersListPage() {
         email,
         department,
         employmentStatus: 'Active',
-        subjectsJSON: JSON.stringify([]),
+        subjectsJSON: serializeSubjects(subjects),
         officeLocation,
       },
     });
@@ -106,6 +107,7 @@ export default async function TeachersListPage() {
 
     teachersWithMetrics.push({
       ...t,
+      subjects: parseSubjects(t.subjectsJSON),
       sectionsCount: t.classSections.length,
       capacitySum,
       ungradedCount,
@@ -158,6 +160,29 @@ export default async function TeachersListPage() {
                       <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
                         Department: {t.department} | Room: {t.officeLocation}
                       </span>
+
+                      {/* Subject tags, previously stored by the seed and rendered nowhere. */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                        {t.subjects.length === 0 ? (
+                          <span style={{ fontSize: '0.7rem', color: 'var(--color-text-light)' }}>No subjects listed</span>
+                        ) : (
+                          t.subjects.map((subject) => (
+                            <span
+                              key={subject}
+                              style={{
+                                fontSize: '0.65rem',
+                                fontWeight: 600,
+                                backgroundColor: 'var(--color-primary-light)',
+                                color: 'var(--color-primary)',
+                                padding: '2px 8px',
+                                borderRadius: '9999px',
+                              }}
+                            >
+                              {subject}
+                            </span>
+                          ))
+                        )}
+                      </div>
                     </div>
                     <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>
                       {t.employmentStatus}
@@ -258,6 +283,14 @@ export default async function TeachersListPage() {
                 <div className="form-group">
                   <label className="form-label">Office / Classroom Room</label>
                   <input name="officeLocation" className="form-control" placeholder="Room 402, Building B" required />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Subjects Taught</label>
+                  <input name="subjects" className="form-control" placeholder="Algebra I, Calculus, Statistics" />
+                  <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                    Comma-separated. Optional.
+                  </span>
                 </div>
 
                 <button type="submit" className="btn btn-primary" style={{ marginTop: '8px' }}>

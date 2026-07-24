@@ -2,6 +2,7 @@ import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
 import { recordAuditEvent } from '@/observability/audit';
+import { parseSchedule, formatSchedule, serializeSchedule, SCHEDULE_DAYS } from '@/shared';
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
 
@@ -20,6 +21,14 @@ export default async function SectionsListPage() {
     const room = formData.get('room') as string;
     const capacity = Number(formData.get('capacity'));
 
+    // Two meeting slots is enough for the common case (a class that meets twice a
+    // week). Rows left blank are dropped by serializeSchedule rather than stored
+    // as empty objects, so a half-filled form cannot poison the column.
+    const scheduleJSON = serializeSchedule([
+      { day: formData.get('day1') as string | null, time: formData.get('time1') as string | null },
+      { day: formData.get('day2') as string | null, time: formData.get('time2') as string | null },
+    ]);
+
     const section = await db.classSection.create({
       data: {
         courseId,
@@ -27,7 +36,7 @@ export default async function SectionsListPage() {
         term,
         room,
         capacity,
-        scheduleJSON: JSON.stringify([]),
+        scheduleJSON,
         status: 'Active',
       },
     });
@@ -79,6 +88,7 @@ export default async function SectionsListPage() {
                   <th>Class Section</th>
                   <th>Assigned Teacher</th>
                   <th>Schedule Term</th>
+                  <th>Meets</th>
                   <th>Room Location</th>
                   <th>Seat Capacity</th>
                   <th>Roster Status</th>
@@ -90,6 +100,7 @@ export default async function SectionsListPage() {
                   const filledCount = s.enrollments.length;
                   const isFull = filledCount >= s.capacity;
                   const pct = Math.round((filledCount / s.capacity) * 100);
+                  const schedule = parseSchedule(s.scheduleJSON);
 
                   return (
                     <tr key={s.id}>
@@ -100,6 +111,9 @@ export default async function SectionsListPage() {
                       </td>
                       <td>{s.teacher.firstName} {s.teacher.lastName}</td>
                       <td>{s.term}</td>
+                      <td style={{ fontSize: '0.8rem', whiteSpace: 'nowrap', color: schedule.length === 0 ? 'var(--color-text-light)' : 'inherit' }}>
+                        {formatSchedule(schedule)}
+                      </td>
                       <td><code>{s.room}</code></td>
                       <td>{filledCount} / {s.capacity} seats ({pct}%)</td>
                       <td>
@@ -162,6 +176,30 @@ export default async function SectionsListPage() {
                 <div className="form-group">
                   <label className="form-label">Seat Capacity Limit</label>
                   <input name="capacity" type="number" className="form-control" defaultValue={25} required min={1} max={50} />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Weekly Meeting Schedule</label>
+                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--color-text-muted)', marginBottom: '6px' }}>
+                    Leave a row blank to skip it.
+                  </span>
+
+                  {[1, 2].map((n) => (
+                    <div key={n} style={{ display: 'flex', gap: '8px', marginBottom: '6px' }}>
+                      <select name={`day${n}`} className="form-control" style={{ flex: 1, padding: '6px' }} defaultValue="">
+                        <option value="">— none —</option>
+                        {SCHEDULE_DAYS.map((d) => (
+                          <option key={d} value={d}>{d}</option>
+                        ))}
+                      </select>
+                      <input
+                        name={`time${n}`}
+                        className="form-control"
+                        style={{ flex: 1, padding: '6px' }}
+                        placeholder="09:00-10:30"
+                      />
+                    </div>
+                  ))}
                 </div>
 
                 <button type="submit" className="btn btn-primary" style={{ marginTop: '8px' }}>

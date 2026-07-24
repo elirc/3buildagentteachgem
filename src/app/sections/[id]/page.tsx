@@ -1,7 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
-import { formatDate, formatDateTime } from '@/shared';
+import { formatDate, formatDateTime, parseSchedule, formatSchedule } from '@/shared';
 import {
   saveGradeAction,
   recordAttendanceAction,
@@ -109,6 +109,9 @@ export default async function SectionDetailPage({ params }: { params: { id: stri
           </h2>
           <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '6px' }}>
             Instructor: <strong>{section.teacher.firstName} {section.teacher.lastName}</strong> | Term: {section.term} | Location: <code>{section.room}</code>
+          </div>
+          <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+            Meets: <strong>{formatSchedule(parseSchedule(section.scheduleJSON))}</strong>
           </div>
         </div>
 

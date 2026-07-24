@@ -3,7 +3,7 @@ import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
 import { formatDate, formatDateTime, getRiskBadgeStyle } from '@/shared';
 import { calculateSectionGrade } from '@/domain/rules/grades';
-import { calculateStudentRisk } from '@/domain/rules/risk';
+import { calculateStudentRisk, compareByRiskSeverity, isEscalationWorthy } from '@/domain/rules/risk';
 import Link from 'next/link';
 
 export const revalidate = 0; // Disable static caching so dashboard displays real-time updates!
@@ -29,16 +29,16 @@ export default async function DashboardPage() {
     include: {
       attendance: true,
       submissions: { include: { assignment: true } },
-      interventionPlans: { where: { status: 'Active' } },
+      // createdByUser is needed so the urgent-case banner can name a human rather
+      // than print a UUID. It costs one join and saves an N+1 in the render.
+      interventionPlans: { where: { status: 'Active' }, include: { createdByUser: true } },
     },
   });
 
-  let criticalRiskCount = 0;
-  let highRiskCount = 0;
-  let mediumRiskCount = 0;
-  let lowRiskCount = 0;
-
-  for (const stu of students) {
+  // Assess every student once, then reuse the results for both the distribution
+  // bars and the urgent-case banner. The previous version threw these away and
+  // only kept counters, which is why the banner had to be hardcoded.
+  const assessments = students.map((stu) => {
     const gradeCalc = calculateSectionGrade(
       stu.submissions.map((s) => ({
         status: s.status,
@@ -56,11 +56,24 @@ export default async function DashboardPage() {
       tardiesCount: tardies,
     });
 
-    if (risk.overallRiskLevel === 'Critical') criticalRiskCount++;
-    else if (risk.overallRiskLevel === 'High') highRiskCount++;
-    else if (risk.overallRiskLevel === 'Medium') mediumRiskCount++;
-    else lowRiskCount++;
-  }
+    return { student: stu, risk, gradeCalc, absences, tardies };
+  });
+
+  const criticalRiskCount = assessments.filter((a) => a.risk.overallRiskLevel === 'Critical').length;
+  const highRiskCount = assessments.filter((a) => a.risk.overallRiskLevel === 'High').length;
+  const mediumRiskCount = assessments.filter((a) => a.risk.overallRiskLevel === 'Medium').length;
+  const lowRiskCount = assessments.filter((a) => a.risk.overallRiskLevel === 'Low').length;
+
+  // Most urgent case first. Guarded with a length check because [...].sort()[0] on an
+  // empty roster is undefined, and an empty school is a legitimate state.
+  const ranked = [...assessments].sort((a, b) =>
+    compareByRiskSeverity(
+      { riskLevel: a.risk.overallRiskLevel, gradeAverage: a.gradeCalc.percentage, absencesCount: a.absences },
+      { riskLevel: b.risk.overallRiskLevel, gradeAverage: b.gradeCalc.percentage, absencesCount: b.absences }
+    )
+  );
+  const urgentCase = ranked.length > 0 && isEscalationWorthy(ranked[0].risk.overallRiskLevel) ? ranked[0] : null;
+  const urgentPlan = urgentCase?.student.interventionPlans[0] ?? null;
 
   // 5. Fetch latest Agent Runs
   const latestRuns = await db.agentRun.findMany({
@@ -213,8 +226,9 @@ export default async function DashboardPage() {
 
             </div>
 
-            {/* Maya Johnson Quick Demo Focus Alert */}
-            {criticalRiskCount > 0 && (
+            {/* Highest-risk student, computed from live data. Nothing here is hardcoded:
+                if this card names someone, the risk engine put them there. */}
+            {urgentCase && (
               <div style={{
                 marginTop: '24px',
                 padding: '16px',
@@ -226,14 +240,41 @@ export default async function DashboardPage() {
                   <span style={{ fontSize: '1.2rem' }}>⚠️</span>
                   <div>
                     <h4 style={{ margin: 0, color: 'var(--color-risk-critical-text)', fontWeight: 700, fontSize: '0.875rem' }}>
-                      Urgent Case Attention: Maya Johnson
+                      Urgent Case Attention: {urgentCase.student.firstName} {urgentCase.student.lastName}
                     </h4>
                     <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: 'var(--color-text-main)', lineHeight: 1.4 }}>
-                      Student <strong>Maya Johnson</strong> has slipped into the Critical Risk category due to <strong>4 missing Algebra I assignments</strong> and <strong>5 consecutive absences</strong>. Advisor Clara Vance created an intervention plan. Recalculations are queued.
+                      Student <strong>{urgentCase.student.firstName} {urgentCase.student.lastName}</strong> is
+                      classified as <strong>{urgentCase.risk.overallRiskLevel} Risk</strong> with a
+                      section average of <strong>{urgentCase.gradeCalc.percentage}%</strong>,{' '}
+                      <strong>{urgentCase.gradeCalc.missingCount} missing {urgentCase.gradeCalc.missingCount === 1 ? 'assignment' : 'assignments'}</strong> and{' '}
+                      <strong>{urgentCase.absences} {urgentCase.absences === 1 ? 'absence' : 'absences'}</strong>.
+                      Primary risk area: <strong>{urgentCase.risk.primaryRiskArea}</strong>.
                     </p>
+
+                    {/* The evidence strings come straight out of calculateStudentRisk, so the
+                        banner can never disagree with the rule that classified the student. */}
+                    <ul style={{ margin: '8px 0 0 0', paddingLeft: '18px', fontSize: '0.75rem', color: 'var(--color-text-main)', lineHeight: 1.5 }}>
+                      {urgentCase.risk.evidence.slice(0, 2).map((line, i) => (
+                        <li key={i}>{line}</li>
+                      ))}
+                    </ul>
+
+                    <p style={{ margin: '8px 0 0 0', fontSize: '0.75rem', color: 'var(--color-text-main)' }}>
+                      {urgentPlan ? (
+                        <>
+                          Active intervention plan <strong>&ldquo;{urgentPlan.summary}&rdquo;</strong> opened
+                          by <strong>{urgentPlan.createdByUser.name}</strong>.
+                        </>
+                      ) : (
+                        <strong style={{ color: 'var(--color-danger-text)' }}>No intervention plan on file.</strong>
+                      )}
+                    </p>
+
                     <div style={{ marginTop: '12px' }}>
-                      <Link href="/students" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-danger-text)', textDecoration: 'underline' }}>
-                        Investigate Maya's Student File →
+                      <Link href={`/students/${urgentCase.student.id}`} style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-danger-text)', textDecoration: 'underline' }}>
+                        {urgentPlan
+                          ? `Investigate ${urgentCase.student.firstName}'s student file →`
+                          : `Open ${urgentCase.student.firstName}'s file and start a plan →`}
                       </Link>
                     </div>
                   </div>

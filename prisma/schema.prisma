@@ -1,0 +1,286 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. User Account
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  name      String
+  email     String   @unique
+  role      String   // Admin, SchoolManager, Teacher, Student, Advisor, Parent, Viewer
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teacher   Teacher?
+  student   Student? @relation("StudentUser")
+  advisorStudents Student[] @relation("StudentAdvisor")
+
+  // Relations for audits, runs, etc.
+  createdAssignments  Assignment[]       @relation("CreatedByUser")
+  gradedSubmissions   Submission[]       @relation("GradedByUser")
+  recordedAttendance  Attendance[]       @relation("RecordedByUser")
+  writtenSupportNotes SupportNote[]      @relation("AuthorUser")
+  createdInterventions InterventionPlan[] @relation("CreatedByUser")
+  agentRuns           AgentRun[]         @relation("CreatedByUser")
+}
+
+// 2. Teacher Profile
+model Teacher {
+  id               String   @id @default(uuid())
+  userId           String?  @unique
+  user             User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  firstName        String
+  lastName         String
+  email            String   @unique
+  department       String
+  employmentStatus String   // Active, OnLeave, Inactive
+  subjectsJSON     String   // Subject tags as JSON array
+  officeLocation   String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  classSections    ClassSection[]
+}
+
+// 3. Student Profile
+model Student {
+  id               String   @id @default(uuid())
+  userId           String?  @unique
+  user             User?    @relation("StudentUser", fields: [userId], references: [id], onDelete: SetNull)
+  firstName        String
+  lastName         String
+  email            String   @unique
+  gradeLevel       String
+  enrollmentStatus String   // Active, Probation, Withdrawn, Graduated
+  studentNumber    String   @unique
+  guardianName     String
+  guardianEmail    String
+  advisorId        String?
+  advisor          User?    @relation("StudentAdvisor", fields: [advisorId], references: [id], onDelete: SetNull)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  enrollments       Enrollment[]
+  submissions       Submission[]
+  attendance        Attendance[]
+  supportNotes      SupportNote[]
+  interventionPlans InterventionPlan[]
+}
+
+// 4. Course
+model Course {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  title       String
+  description String
+  subject     String
+  gradeLevel  String
+  creditHours Float
+  status      String   // Draft, Active, Archived
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  classSections ClassSection[]
+}
+
+// 5. Class Section
+model ClassSection {
+  id           String   @id @default(uuid())
+  courseId     String
+  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  teacherId    String
+  teacher      Teacher  @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  term         String
+  room         String
+  scheduleJSON String   // Structured schedule e.g. [{day: "Monday", time: "09:00-10:30"}]
+  capacity     Int
+  status       String   // Planned, Active, Completed, Cancelled
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  enrollments  Enrollment[]
+  assignments  Assignment[]
+  attendance   Attendance[]
+}
+
+// 6. Enrollment
+model Enrollment {
+  id             String       @id @default(uuid())
+  studentId      String
+  student        Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  classSectionId String
+  classSection   ClassSection @relation(fields: [classSectionId], references: [id], onDelete: Cascade)
+  status         String       // Enrolled, Dropped, Completed, Waitlisted
+  enrolledAt     DateTime     @default(now())
+  droppedAt      DateTime?
+  finalGrade     Float?       // Numeric average, set on completion
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([studentId, classSectionId])
+}
+
+// 7. Assignment
+model Assignment {
+  id             String       @id @default(uuid())
+  classSectionId String
+  classSection   ClassSection @relation(fields: [classSectionId], references: [id], onDelete: Cascade)
+  title          String
+  description    String
+  type           String       // Homework, Quiz, Exam, Project, Discussion, Lab, Other
+  status         String       // Draft, Published, Closed
+  dueDate        DateTime
+  pointsPossible Float
+  createdById    String
+  createdByUser  User         @relation("CreatedByUser", fields: [createdById], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  submissions    Submission[]
+}
+
+// 8. Assignment Submission
+model Submission {
+  id           String     @id @default(uuid())
+  assignmentId String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  studentId    String
+  student      Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  status       String     // NotStarted, Submitted, Late, Missing, Graded, Returned
+  submittedAt  DateTime?
+  contentText  String?
+  attachmentUrl String?
+  score        Float?
+  feedback     String?
+  gradedById   String?
+  gradedByUser User?      @relation("GradedByUser", fields: [gradedById], references: [id], onDelete: SetNull)
+  gradedAt     DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([assignmentId, studentId])
+}
+
+// 9. Attendance Record
+model Attendance {
+  id             String       @id @default(uuid())
+  studentId      String
+  student        Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  classSectionId String
+  classSection   ClassSection @relation(fields: [classSectionId], references: [id], onDelete: Cascade)
+  date           DateTime
+  status         String       // Present, Absent, Tardy, Excused
+  notes          String?
+  recordedById   String
+  recordedByUser User         @relation("RecordedByUser", fields: [recordedById], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([studentId, classSectionId, date])
+}
+
+// 10. Support Note
+model SupportNote {
+  id          String   @id @default(uuid())
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  authorId    String
+  author      User     @relation("AuthorUser", fields: [authorId], references: [id], onDelete: Cascade)
+  visibility  String   // TeacherOnly, AdvisorOnly, AdminOnly, Shared
+  noteType    String   // Academic, Attendance, Behavior, FamilyCommunication, Other
+  content     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// 11. Support Intervention Plan
+model InterventionPlan {
+  id                 String   @id @default(uuid())
+  studentId          String
+  student            Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  createdById        String
+  createdByUser      User     @relation("CreatedByUser", fields: [createdById], references: [id], onDelete: Cascade)
+  status             String   // Draft, Active, Completed, Cancelled
+  riskArea           String   // Grades, Attendance, Engagement, Behavior, Other
+  summary            String
+  recommendedActions String
+  followUpDate       DateTime
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// 12. Structured System Log
+model SystemLog {
+  id          String   @id @default(uuid())
+  timestamp   DateTime @default(now())
+  service     String
+  environment String
+  level       String   // debug, info, warn, error, fatal
+  message     String
+  requestId   String?
+  userId      String?
+  entityType  String?
+  entityId    String?
+  metadataJSON String   // JSON string with key-value diagnostics
+  fingerprint String   // MD5 or simple string grouping similar logs
+  createdAt   DateTime @default(now())
+}
+
+// 13. Mock Background Job
+model BackgroundJob {
+  id             String    @id @default(uuid())
+  type           String    // EmailNotification, GradeRecalculation, AttendanceSummary, ReportGeneration, EnrollmentSync, GuardianDigest, AgentRun
+  status         String    // Queued, Running, Succeeded, Failed, Retrying, DeadLettered
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(3)
+  payloadJSON    String
+  errorMessage   String?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  
+  // Optional relations context
+  studentId      String?
+  teacherId      String?
+  classSectionId String?
+  assignmentId   String?
+}
+
+// 14. Heuristic Agent Run
+model AgentRun {
+  id                String    @id @default(uuid())
+  agentType         String    // StudentProgressSummary, AtRiskStudentDetection, AssignmentFeedback, AttendanceAnomaly, TeacherWorkloadInsight
+  status            String    // Pending, Running, Succeeded, Failed
+  targetType        String    // Student, Teacher, ClassSection, Assignment, Submission, LogGroup, Job
+  targetId          String
+  inputSnapshotJSON String
+  outputJSON        String?
+  confidenceScore   Float?
+  startedAt         DateTime  @default(now())
+  completedAt       DateTime?
+  errorMessage      String?
+  createdById       String?
+  createdByUser     User?     @relation("CreatedByUser", fields: [createdById], references: [id], onDelete: SetNull)
+  traceJSON         String?   // Step-by-step reasoning steps as JSON
+  createdAt         DateTime  @default(now())
+}
+
+// 15. Transactional Audit Event
+model AuditEvent {
+  id           String   @id @default(uuid())
+  actorId      String   // User ID or "system"
+  action       String   // e.g. "teacher.create", "enrollment.drop"
+  entityType   String
+  entityId     String
+  beforeJSON   String?
+  afterJSON    String?
+  metadataJSON String?
+  createdAt    DateTime @default(now())
+}

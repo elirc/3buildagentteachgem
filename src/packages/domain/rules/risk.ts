@@ -1,6 +1,51 @@
 export type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical';
 export type RiskArea = 'Grades' | 'Attendance' | 'Engagement' | 'None';
 
+/**
+ * Numeric severity of each risk level, so callers can sort without hardcoding
+ * the ordering of the string union in a comparator somewhere in the UI.
+ */
+export const RISK_LEVEL_SEVERITY: Record<RiskLevel, number> = {
+  Low: 0,
+  Medium: 1,
+  High: 2,
+  Critical: 3,
+};
+
+export interface RankableStudentRisk {
+  riskLevel: RiskLevel;
+  gradeAverage: number;
+  absencesCount: number;
+}
+
+/**
+ * Orders students most-urgent-first.
+ *
+ * The tie-breaks are not decoration. Pages render with `revalidate = 0`, so this
+ * comparator runs on every single request; if two equally-critical students could
+ * swap places the "most urgent case" banner would flicker between them on reload.
+ * Sorting by (severity, then lower grade, then more absences, then id) is total and
+ * deterministic for any two distinct students.
+ */
+export function compareByRiskSeverity(a: RankableStudentRisk, b: RankableStudentRisk): number {
+  const severityDelta = RISK_LEVEL_SEVERITY[b.riskLevel] - RISK_LEVEL_SEVERITY[a.riskLevel];
+  if (severityDelta !== 0) return severityDelta;
+
+  // Same level: the lower grade average is the more urgent case.
+  if (a.gradeAverage !== b.gradeAverage) return a.gradeAverage - b.gradeAverage;
+
+  // Still tied: more absences wins.
+  return b.absencesCount - a.absencesCount;
+}
+
+/**
+ * The banner is deliberately quiet below High. Medium risk is common and
+ * self-resolving; surfacing it as an emergency trains people to ignore the banner.
+ */
+export function isEscalationWorthy(level: RiskLevel): boolean {
+  return level === 'High' || level === 'Critical';
+}
+
 export interface StudentRiskInput {
   gradeAverage: number;
   missingAssignmentsCount: number;

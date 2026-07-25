@@ -18,7 +18,8 @@ A junior software engineer who has just been handed this repository and needs to
 | --- | --- | --- |
 | [`01-how-this-app-works.md`](01-how-this-app-works.md) | The product, the data model, the layered architecture, the request lifecycle, a page-by-page and file-by-file map, and how to run it locally. | **First. Read it end to end.** |
 | [`02-codebase-gotchas.md`](02-codebase-gotchas.md) | Verified quirks, dead code, unused dependencies, N+1 queries, and correctness traps in the current code. | Before you write your first line of code. |
-| [`03-user-stories.md`](03-user-stories.md) | 19 new feature tickets, tiered from easy to hard, each with acceptance criteria, a file list, an implementation plan, and edge cases. | When you're ready to build. |
+| [`03-user-stories.md`](03-user-stories.md) | 19 feature tickets, tiered from easy to hard, each with acceptance criteria, a file list, an implementation plan, and edge cases. | When you're ready to build. |
+| [`04-what-changed.md`](04-what-changed.md) | **All 19 stories have been built.** This reconciles the docs with the code: which gotchas are fixed, which still stand and why, and which PRs are worth reading. | After `02`, so you know what is still true. |
 
 ## Relationship to the existing `docs/` folder
 
@@ -32,6 +33,11 @@ the schema wins.
 `fabledocs/` does not replace `docs/` — it adds a verified architecture walkthrough, a
 known-issues list, and a fresh backlog that does not overlap with the 10 stories already
 in `docs/user-story-build-path/01-stories.md`.
+
+> **Status:** all 19 stories in `03-user-stories.md` were implemented, each on its own
+> branch with its own pull request. `02-codebase-gotchas.md` describes the codebase **as
+> imported** — read [`04-what-changed.md`](04-what-changed.md) to see which of its findings
+> still apply.
 
 ## The 60-second version
 

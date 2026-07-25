@@ -145,7 +145,8 @@ see all of it, and compare it against a previous run to see what changed and why
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | **The git workflow this repo teaches.** Branches, commit messages, PR bodies, review habits. |
 | [`fabledocs/01-how-this-app-works.md`](fabledocs/01-how-this-app-works.md) | Full architecture walkthrough: data model, layers, request lifecycle, page map. |
 | [`fabledocs/02-codebase-gotchas.md`](fabledocs/02-codebase-gotchas.md) | Verified quirks and traps, and which "bugs" are deliberate teaching fixtures. |
-| [`fabledocs/03-user-stories.md`](fabledocs/03-user-stories.md) | The 19-ticket backlog this repo was built from. |
+| [`fabledocs/03-user-stories.md`](fabledocs/03-user-stories.md) | The 19-ticket backlog this repo was built from — all shipped. |
+| [`fabledocs/04-what-changed.md`](fabledocs/04-what-changed.md) | Which gotchas the build fixed, which still stand, and the PRs worth reading. |
 | `docs/` | Earlier learning suites. Useful, but see the "documentation drift" section of the gotchas file first. |
 
 ---

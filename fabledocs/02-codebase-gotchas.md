@@ -1,5 +1,11 @@
 # Codebase Gotchas
 
+> **This document describes the codebase as originally imported** (commit
+> `chore: import EduOps application baseline`). Many of these findings have since been
+> fixed by the 19-story build — see [`04-what-changed.md`](04-what-changed.md) for what is
+> still true. It is kept unedited on purpose: the *reasoning* about why each one mattered
+> is the teaching material, and rewriting history would destroy it.
+
 Everything below was verified against the code in this repo. Line references are accurate
 as of writing. Read this before your first ticket — several of the user stories in
 `03-user-stories.md` exist specifically to fix things on this list.

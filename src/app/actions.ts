@@ -88,6 +88,63 @@ export async function enqueueCourseworkSweepAction() {
 }
 
 /**
+ * 2e. Queue a guardian digest for every active student.
+ *
+ * One job per student rather than one job for all of them: a failure composing
+ * Maya's digest must not prevent John's from being written, and a per-student
+ * job gives per-student retry for free.
+ */
+export async function generateDigestsAction() {
+  const session = await getActiveUser();
+  const students = await db.student.findMany({
+    where: { enrollmentStatus: 'Active' },
+    select: { id: true },
+  });
+
+  for (const s of students) {
+    await enqueueJob('GuardianDigest', { studentId: s.id, requestedBy: session.id }, { studentId: s.id });
+  }
+
+  revalidatePath('/jobs');
+  revalidatePath('/digests');
+  return { queued: students.length };
+}
+
+/**
+ * 2f. Approve a digest and mark it sent.
+ *
+ * There is no mail transport in this app, and pretending otherwise would be
+ * the dishonest option. The status records a human decision — "I have read
+ * this and it is fit to send" — which is the part worth modelling.
+ */
+export async function approveDigestAction(digestId: string) {
+  const session = await getActiveUser();
+  const before = await db.guardianDigest.findUniqueOrThrow({ where: { id: digestId } });
+
+  if (before.status === 'Sent') {
+    return { success: false, reason: 'This digest has already been approved.' };
+  }
+
+  const after = await db.guardianDigest.update({
+    where: { id: digestId },
+    data: { status: 'Sent', sentAt: new Date() },
+  });
+
+  await recordAuditEvent({
+    actorId: session.id,
+    action: 'digest.send',
+    entityType: 'GuardianDigest',
+    entityId: digestId,
+    before,
+    after,
+  });
+
+  revalidatePath('/digests');
+  revalidatePath('/digests/' + digestId);
+  return { success: true };
+}
+
+/**
  * 3. Run Mock Agent Action
  */
 export async function runAgentAction(params: {

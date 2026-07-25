@@ -28,6 +28,7 @@ model User {
   writtenSupportNotes SupportNote[]      @relation("AuthorUser")
   createdInterventions InterventionPlan[] @relation("CreatedByUser")
   agentRuns           AgentRun[]         @relation("CreatedByUser")
+  notifications       Notification[]     @relation("UserNotifications")
 }
 
 // 2. Teacher Profile
@@ -304,4 +305,26 @@ model GuardianDigest {
   // Regenerating a week must update the existing draft rather than pile up
   // duplicates, so the period start is part of the identity.
   @@unique([studentId, periodStart])
+}
+
+// 17. Notification (one row per person who needs to know)
+model Notification {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  kind       String   // AgentRecommendation, JobDeadLettered, InterventionFollowUp, System
+  urgency    String   // Low, Medium, High, Critical
+  title      String
+  body       String
+  linkPath   String?
+  entityType String?
+  entityId   String?
+  // Idempotency key. Includes a time bucket so a legitimately repeated alert
+  // next week is not swallowed forever by the unique constraint.
+  dedupeKey  String
+  readAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt])
 }

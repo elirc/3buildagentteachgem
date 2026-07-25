@@ -11,14 +11,35 @@ import {
   createSupportNoteAction,
   createInterventionPlanAction,
 } from '../../actions';
+import { buildStudentTimeline, type TimelineKind } from '@/observability/timeline';
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
 
 export const revalidate = 0;
 
-export default async function StudentDetailPage({ params }: { params: { id: string } }) {
+const TIMELINE_FILTERS: Array<{ value: string; label: string; kinds: TimelineKind[] }> = [
+  { value: 'all', label: 'All', kinds: ['grade', 'attendance', 'enrollment', 'support', 'agent'] },
+  { value: 'grades', label: 'Grades', kinds: ['grade'] },
+  { value: 'attendance', label: 'Attendance', kinds: ['attendance'] },
+  { value: 'support', label: 'Support', kinds: ['support', 'enrollment'] },
+  { value: 'agents', label: 'Agents', kinds: ['agent'] },
+];
+
+export default async function StudentDetailPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams: { timeline?: string };
+}) {
   const studentId = params.id;
   const activeUser = await getActiveUser();
+
+  const timelineFilter =
+    TIMELINE_FILTERS.find((f) => f.value === searchParams.timeline) ?? TIMELINE_FILTERS[0];
+  const timeline = (await buildStudentTimeline(studentId)).filter((e) =>
+    timelineFilter.kinds.includes(e.kind)
+  );
 
   // 1. Fetch Student facts
   const student = await db.student.findUniqueOrThrow({
@@ -334,6 +355,76 @@ export default async function StudentDetailPage({ params }: { params: { id: stri
                     Complete Registration
                   </button>
                 </form>
+              </div>
+            )}
+          </div>
+
+          {/* ACTIVITY TIMELINE — every source, one stream, newest first */}
+          <div className="card">
+            <h3 style={{ fontSize: '1.1rem', marginBottom: '8px' }}>🕓 Activity Timeline</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '16px' }}>
+              Grades, attendance, enrolment changes, support actions and agent runs merged into
+              one chronology — the two-minute version of &ldquo;what has been happening with this student?&rdquo;
+            </p>
+
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', flexWrap: 'wrap' }}>
+              {TIMELINE_FILTERS.map((f) => (
+                <Link
+                  key={f.value}
+                  href={`/students/${studentId}?timeline=${f.value}`}
+                  className="btn btn-secondary btn-sm"
+                  style={{
+                    backgroundColor: f.value === timelineFilter.value ? 'var(--color-primary-light)' : '#ffffff',
+                    color: f.value === timelineFilter.value ? 'var(--color-primary)' : 'inherit',
+                    borderColor: f.value === timelineFilter.value ? 'var(--color-primary)' : 'var(--color-border)',
+                  }}
+                >
+                  {f.label}
+                </Link>
+              ))}
+            </div>
+
+            {timeline.length === 0 ? (
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', margin: 0 }}>
+                No recorded activity in this category yet.
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                {timeline.map((entry, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      gap: '12px',
+                      padding: '10px 12px',
+                      borderLeft: '2px solid var(--color-border)',
+                      backgroundColor: i % 2 === 0 ? 'var(--color-bg)' : 'transparent',
+                    }}
+                  >
+                    <span style={{ fontSize: '1.1rem', lineHeight: 1.2 }}>{entry.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+                        <strong style={{ fontSize: '0.85rem' }}>{entry.title}</strong>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
+                          {formatDateTime(entry.at)}
+                        </span>
+                      </div>
+                      {entry.detail && (
+                        <p style={{ margin: '2px 0 0 0', fontSize: '0.8rem', color: 'var(--color-text-main)', lineHeight: 1.4 }}>
+                          {entry.detail}
+                        </p>
+                      )}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--color-text-light)' }}>{entry.actorName}</span>
+                        {entry.href && (
+                          <Link href={entry.href} style={{ fontSize: '0.7rem', fontWeight: 600, textDecoration: 'underline' }}>
+                            Open →
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>

@@ -145,6 +145,39 @@ export async function approveDigestAction(digestId: string) {
 }
 
 /**
+ * 2g. Mark one notification read.
+ *
+ * updateMany with the userId in the WHERE clause rather than update by id:
+ * that makes it structurally impossible to mark someone else's notification
+ * read by guessing an id, without needing a separate ownership check that a
+ * future edit could forget.
+ */
+export async function markNotificationReadAction(notificationId: string) {
+  const session = await getActiveUser();
+
+  await db.notification.updateMany({
+    where: { id: notificationId, userId: session.id, readAt: null },
+    data: { readAt: new Date() },
+  });
+
+  revalidatePath('/notifications');
+  revalidatePath('/');
+}
+
+export async function markAllNotificationsReadAction() {
+  const session = await getActiveUser();
+
+  const result = await db.notification.updateMany({
+    where: { userId: session.id, readAt: null },
+    data: { readAt: new Date() },
+  });
+
+  revalidatePath('/notifications');
+  revalidatePath('/');
+  return { marked: result.count };
+}
+
+/**
  * 3. Run Mock Agent Action
  */
 export async function runAgentAction(params: {

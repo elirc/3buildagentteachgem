@@ -21,6 +21,12 @@ export default async function RootLayout({
     orderBy: { name: 'asc' },
   });
 
+  // count(), not findMany().length — the layout runs on every request and only
+  // needs the number.
+  const unreadNotifications = await db.notification.count({
+    where: { userId: activeUser.id, readAt: null },
+  });
+
   return (
     <html lang="en">
       <head>
@@ -57,6 +63,29 @@ export default async function RootLayout({
                 Modular Monolith SWE Laboratory
               </span>
             </div>
+          </div>
+
+          {/* NOTIFICATION BELL — follows the ACTIVE user, so switching roles in
+              the dropdown next to it changes the count. */}
+          <div style={{ marginLeft: 'auto', marginRight: '16px' }}>
+            <Link
+              href="/notifications"
+              style={{ position: 'relative', fontSize: '1.3rem', textDecoration: 'none' }}
+              title={unreadNotifications > 0 ? `${unreadNotifications} unread` : 'Notifications'}
+            >
+              🔔
+              {unreadNotifications > 0 && (
+                <span style={{
+                  position: 'absolute', top: '-6px', right: '-10px',
+                  backgroundColor: 'var(--color-danger)', color: '#ffffff',
+                  fontSize: '0.6rem', fontWeight: 700,
+                  minWidth: '16px', height: '16px', lineHeight: '16px',
+                  borderRadius: '9999px', textAlign: 'center', padding: '0 4px',
+                }}>
+                  {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                </span>
+              )}
+            </Link>
           </div>
 
           {/* DEVELOPER SWITCHER CONTROL */}
@@ -134,6 +163,7 @@ export default async function RootLayout({
                 <Link href="/logs" className="sidebar-link">📝 Log Explorer</Link>
                 <Link href="/agent-runs" className="sidebar-link">🤖 Agent Reasoning Runs</Link>
                 <Link href="/audits" className="sidebar-link">🔐 Audit History</Link>
+                <Link href="/notifications" className="sidebar-link">🔔 Notifications</Link>
                 <Link href="/permissions" className="sidebar-link">🛡️ Permission Matrix</Link>
               </nav>
             </div>

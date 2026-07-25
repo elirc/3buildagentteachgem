@@ -2,7 +2,9 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   validateEnrollmentRules,
+  selectWaitlistPromotion,
   type EnrollmentRuleInput,
+  type WaitlistCandidate,
 } from '../src/packages/domain/rules/enrollment';
 
 /** A registration that should succeed. Override one field per test. */
@@ -133,5 +135,122 @@ describe('validateEnrollmentRules — gate ORDER', () => {
     // deliberate choice.
     const result = check({ studentStatus: 'Graduated', sectionStatus: 'Cancelled' });
     assert.ok(result.reason?.includes('Graduated'));
+  });
+});
+
+describe('selectWaitlistPromotion', () => {
+  const candidate = (
+    id: string,
+    queuedAt: string,
+    studentStatus = 'Active'
+  ): WaitlistCandidate => ({
+    enrollmentId: id,
+    studentId: `student-${id}`,
+    queuedAt: new Date(queuedAt),
+    studentStatus,
+  });
+
+  const promote = (overrides: Partial<Parameters<typeof selectWaitlistPromotion>[0]> = {}) =>
+    selectWaitlistPromotion({
+      candidates: [],
+      currentEnrollmentCount: 19,
+      sectionCapacity: 20,
+      sectionStatus: 'Active',
+      ...overrides,
+    });
+
+  test('promotes the longest-waiting eligible student', () => {
+    // Fairness is "longest wait wins" — the only ordering a student can verify
+    // for themselves, and the only one that cannot be gamed by refreshing.
+    const result = promote({
+      candidates: [
+        candidate('b', '2026-03-02T10:00:00Z'),
+        candidate('a', '2026-03-01T09:00:00Z'),
+        candidate('c', '2026-03-03T11:00:00Z'),
+      ],
+    });
+
+    assert.equal(result.promote, true);
+    assert.equal(result.promote && result.enrollmentId, 'a');
+  });
+
+  test('skips ineligible students instead of blocking the queue', () => {
+    // A withdrawn student at the head of the queue must not freeze it. Blocking
+    // would leave the seat empty forever and nobody behind them would advance.
+    const result = promote({
+      candidates: [
+        candidate('withdrawn', '2026-01-01T00:00:00Z', 'Withdrawn'),
+        candidate('graduated', '2026-01-02T00:00:00Z', 'Graduated'),
+        candidate('active', '2026-03-01T00:00:00Z'),
+      ],
+    });
+
+    assert.equal(result.promote, true);
+    assert.equal(result.promote && result.enrollmentId, 'active');
+  });
+
+  test('does nothing when the waitlist is empty', () => {
+    const result = promote({ candidates: [] });
+
+    assert.equal(result.promote, false);
+    assert.equal(result.promote === false && result.reason, 'Waitlist is empty.');
+  });
+
+  test('does nothing when every candidate is ineligible', () => {
+    const result = promote({ candidates: [candidate('w', '2026-01-01T00:00:00Z', 'Withdrawn')] });
+
+    assert.equal(result.promote, false);
+    assert.ok(result.promote === false && result.reason.includes('No eligible'));
+  });
+
+  test('refuses to promote into a full section', () => {
+    // The caller must recount AFTER the drop. Passing a stale count is the
+    // classic bug here, and this is the guard that catches it.
+    const result = promote({
+      candidates: [candidate('a', '2026-01-01T00:00:00Z')],
+      currentEnrollmentCount: 20,
+      sectionCapacity: 20,
+    });
+
+    assert.equal(result.promote, false);
+    assert.ok(result.promote === false && result.reason.includes('No seat'));
+  });
+
+  test('refuses to promote into a cancelled or completed section', () => {
+    for (const sectionStatus of ['Cancelled', 'Completed']) {
+      const result = promote({
+        candidates: [candidate('a', '2026-01-01T00:00:00Z')],
+        sectionStatus,
+      });
+
+      assert.equal(result.promote, false, `${sectionStatus} should not promote`);
+    }
+  });
+
+  test('allows promotion into a Planned section', () => {
+    // Planned sections accept enrolments (see validateEnrollmentRules), so
+    // their waitlists must move too or the two rules would disagree.
+    const result = promote({
+      candidates: [candidate('a', '2026-01-01T00:00:00Z')],
+      sectionStatus: 'Planned',
+    });
+
+    assert.equal(result.promote, true);
+  });
+
+  test('is deterministic when two students queued at the same instant', () => {
+    // Same timestamp is realistic: a bulk import writes rows inside one
+    // transaction. Without the id tie-break the winner would depend on row
+    // order, and re-running could promote a different student.
+    const sameInstant = '2026-03-01T09:00:00Z';
+    const args = {
+      candidates: [candidate('zzz', sameInstant), candidate('aaa', sameInstant)],
+    };
+
+    const first = promote(args);
+    const second = promote(args);
+
+    assert.equal(first.promote && first.enrollmentId, 'aaa');
+    assert.deepEqual(first, second);
   });
 });

@@ -1,4 +1,5 @@
 import React from 'react';
+import { notFound } from 'next/navigation';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
 import { formatDate, formatDateTime, canPerformAction } from '@/shared';
@@ -14,10 +15,13 @@ export default async function AgentRunDetailPage({ params }: { params: { id: str
   const activeUser = await getActiveUser();
 
   // Fetch the agent run
-  const run = await db.agentRun.findUniqueOrThrow({
+  // Same reasoning as the other detail pages: a bad id is a 404, not a 500.
+  const run = await db.agentRun.findUnique({
     where: { id: runId },
     include: { createdByUser: true },
   });
+
+  if (!run) notFound();
 
   const inputs = JSON.parse(run.inputSnapshotJSON || '{}');
   const outputs = run.outputJSON ? JSON.parse(run.outputJSON) : null;
@@ -59,14 +63,18 @@ export default async function AgentRunDetailPage({ params }: { params: { id: str
 
   const canRerun = canPerformAction(activeUser.role, 'agent.run.student');
 
+  // Captured as plain values before the closure. TypeScript does not carry the
+  // `if (!run) notFound()` narrowing into a nested function body, and a
+  // non-null assertion would only silence the checker rather than answer it.
+  const rerunTarget = {
+    agentType: run.agentType as AgentType,
+    targetType: run.targetType as AgentTargetType,
+    targetId: run.targetId,
+  };
+
   async function handleRerun() {
     'use server';
-    await runAgentAction({
-      agentType: run.agentType as AgentType,
-      targetType: run.targetType as AgentTargetType,
-      targetId: run.targetId,
-      createdById: activeUser.id,
-    });
+    await runAgentAction({ ...rerunTarget, createdById: activeUser.id });
   }
 
   return (

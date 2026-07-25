@@ -1,4 +1,5 @@
 import React from 'react';
+import { notFound } from 'next/navigation';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
 import { formatDate, formatDateTime, parseSchedule, formatSchedule, canPerformAction, lockMessage } from '@/shared';
@@ -30,7 +31,10 @@ export default async function SectionDetailPage({
   const activeUser = await getActiveUser();
 
   // 1. Fetch Class Section details with enrollments
-  const section = await db.classSection.findUniqueOrThrow({
+  // findUnique + notFound(), not findUniqueOrThrow. A bad id in a URL is a 404;
+  // findUniqueOrThrow surfaces a raw PrismaClientKnownRequestError as a 500,
+  // which is both the wrong status and a leak of the query shape.
+  const section = await db.classSection.findUnique({
     where: { id: sectionId },
     include: {
       course: true,
@@ -41,6 +45,8 @@ export default async function SectionDetailPage({
       assignments: { orderBy: { dueDate: 'asc' } },
     },
   });
+
+  if (!section) notFound();
 
   // A section page shows the whole roster: every classmate's name, student
   // number and running average. That is other people's data, so the roles whose

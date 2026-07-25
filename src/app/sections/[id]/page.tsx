@@ -16,7 +16,13 @@ import Link from 'next/link';
 
 export const revalidate = 0;
 
-export default async function SectionDetailPage({ params }: { params: { id: string } }) {
+export default async function SectionDetailPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams: { usedraft?: string };
+}) {
   const sectionId = params.id;
   const activeUser = await getActiveUser();
 
@@ -56,6 +62,25 @@ export default async function SectionDetailPage({ params }: { params: { id: stri
 
   const canManageCoursework = ['Admin', 'SchoolManager', 'Teacher'].includes(activeUser.role);
 
+  // Latest AssignmentFeedback run per ungraded submission, in ONE query.
+  // Ordered newest-first, then reduced keeping the first sighting of each
+  // targetId — that is the newest run for that submission.
+  const feedbackRuns = ungradedSubmissions.length
+    ? await db.agentRun.findMany({
+        where: {
+          agentType: 'AssignmentFeedback',
+          targetType: 'Submission',
+          targetId: { in: ungradedSubmissions.map((s) => s.id) },
+        },
+        orderBy: { createdAt: 'desc' },
+      })
+    : [];
+
+  const latestFeedbackRun = new Map<string, (typeof feedbackRuns)[number]>();
+  for (const run of feedbackRuns) {
+    if (!latestFeedbackRun.has(run.targetId)) latestFeedbackRun.set(run.targetId, run);
+  }
+
   // Load latest anomaly agent runs on this section
   const latestRuns = await db.agentRun.findMany({
     where: { targetType: 'ClassSection', targetId: sectionId, agentType: 'AttendanceAnomaly' },
@@ -69,12 +94,29 @@ export default async function SectionDetailPage({ params }: { params: { id: stri
     const submissionId = formData.get('submissionId') as string;
     const score = Number(formData.get('score'));
     const feedback = formData.get('feedback') as string;
+    const agentRunId = (formData.get('agentRunId') as string) || undefined;
+    const draftShown = (formData.get('draftShown') as string) || '';
 
     await saveGradeAction({
       submissionId,
       score,
       feedback,
       actorId: activeUser.id,
+      agentRunId,
+      // Compared here rather than trusted from a checkbox: the question is
+      // whether the teacher actually changed the words, and only the submitted
+      // text can answer that.
+      acceptedDraftVerbatim: !!agentRunId && feedback.trim() === draftShown.trim(),
+    });
+  }
+
+  async function handleDraftFeedback(formData: FormData) {
+    'use server';
+    await runAgentAction({
+      agentType: 'AssignmentFeedback',
+      targetType: 'Submission',
+      targetId: formData.get('submissionId') as string,
+      createdById: activeUser.id,
     });
   }
 
@@ -449,25 +491,135 @@ export default async function SectionDetailPage({ params }: { params: { id: stri
                       {sub.contentText || 'No paper attachment text.'}
                     </div>
 
+                    {/* AGENT DRAFT PANEL — proposes, never disposes.
+                        The teacher can ignore it entirely and grade as before. */}
+                    {(() => {
+                      const run = latestFeedbackRun.get(sub.id);
+                      const output = run?.outputJSON ? JSON.parse(run.outputJSON) : null;
+                      const draft: string = output?.metadata?.draftFeedback ?? '';
+                      const teacherNotes: string = output?.metadata?.teacherNotes ?? '';
+                      const isUsingDraft = searchParams.usedraft === sub.id && !!draft;
+
+                      return (
+                        <div style={{ marginBottom: '16px' }}>
+                          {!run ? (
+                            ['Admin', 'SchoolManager', 'Teacher'].includes(activeUser.role) && (
+                              <form action={handleDraftFeedback}>
+                                <input type="hidden" name="submissionId" value={sub.id} />
+                                <button type="submit" className="btn btn-secondary btn-sm">
+                                  Draft feedback with agent 🤖
+                                </button>
+                              </form>
+                            )
+                          ) : run.status === 'Failed' ? (
+                            <div style={{
+                              padding: '10px 12px', fontSize: '0.8rem',
+                              backgroundColor: 'var(--color-risk-critical-bg)',
+                              border: '1px solid var(--color-danger)', borderRadius: 'var(--radius-sm)',
+                            }}>
+                              <strong>Agent run failed.</strong> Grading is unaffected — enter a score as normal.
+                              <div style={{ fontSize: '0.7rem', marginTop: '4px', fontFamily: 'monospace' }}>
+                                {run.errorMessage}
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{
+                              padding: '12px', backgroundColor: 'var(--color-primary-light)',
+                              border: '1px solid var(--color-primary)', borderRadius: 'var(--radius-sm)',
+                            }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                <strong style={{ fontSize: '0.75rem', color: 'var(--color-primary-hover)' }}>
+                                  🤖 Suggested feedback
+                                </strong>
+                                <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                                  Confidence {run.confidenceScore ? Math.round(run.confidenceScore * 100) : '—'}%
+                                </span>
+                              </div>
+
+                              <p style={{
+                                margin: 0, fontSize: '0.8rem', lineHeight: 1.45,
+                                backgroundColor: '#ffffff', padding: '10px',
+                                borderRadius: '4px', border: '1px solid var(--color-border-light)',
+                              }}>
+                                {draft}
+                              </p>
+
+                              {teacherNotes && (
+                                <p style={{ margin: '8px 0 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                                  <strong>Private note to you:</strong> {teacherNotes}
+                                </p>
+                              )}
+
+                              {/* The agent's own stated limitations are surfaced, not hidden.
+                                  An assistant that tells you when it is guessing is worth
+                                  more than one that always sounds certain. */}
+                              {output?.limitations?.length > 0 && (
+                                <ul style={{ margin: '8px 0 0 0', paddingLeft: '18px', fontSize: '0.7rem', color: 'var(--color-warning-text)' }}>
+                                  {output.limitations.map((l: string, i: number) => <li key={i}>{l}</li>)}
+                                </ul>
+                              )}
+
+                              <div style={{ marginTop: '10px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                {isUsingDraft ? (
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--color-success)', fontWeight: 600 }}>
+                                    ✓ Loaded into the feedback box below — edit freely before submitting.
+                                  </span>
+                                ) : (
+                                  <Link
+                                    href={`/sections/${sectionId}?usedraft=${sub.id}`}
+                                    className="btn btn-primary btn-sm"
+                                  >
+                                    Use this draft
+                                  </Link>
+                                )}
+                                <Link href={`/agent-runs/${run.id}`} style={{ fontSize: '0.7rem', textDecoration: 'underline' }}>
+                                  View reasoning trace →
+                                </Link>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     {/* Form to submit grade */}
                     {['Admin', 'SchoolManager', 'Teacher'].includes(activeUser.role) ? (
-                      <form action={handleGrade} style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
-                        <input type="hidden" name="submissionId" value={sub.id} />
-                        
-                        <div className="form-group" style={{ flex: 0.5, marginBottom: 0 }}>
-                          <label className="form-label">Earned Score</label>
-                          <input name="score" type="number" className="form-control" required min={0} max={sub.assignment.pointsPossible} placeholder={`0-${sub.assignment.pointsPossible}`} />
-                        </div>
+                      (() => {
+                        const run = latestFeedbackRun.get(sub.id);
+                        const output = run?.outputJSON ? JSON.parse(run.outputJSON) : null;
+                        const draft: string = output?.metadata?.draftFeedback ?? '';
+                        const isUsingDraft = searchParams.usedraft === sub.id && !!draft;
 
-                        <div className="form-group" style={{ flex: 1.5, marginBottom: 0 }}>
-                          <label className="form-label">Narrative Feedback Comments</label>
-                          <input name="feedback" className="form-control" required placeholder="Praise strengths or suggest topic remediation..." />
-                        </div>
+                        return (
+                          <form action={handleGrade} style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
+                            <input type="hidden" name="submissionId" value={sub.id} />
+                            {run && <input type="hidden" name="agentRunId" value={run.id} />}
+                            {isUsingDraft && <input type="hidden" name="draftShown" value={draft} />}
 
-                        <button type="submit" className="btn btn-success btn-sm">
-                          Submit Grade & Recalculate
-                        </button>
-                      </form>
+                            <div className="form-group" style={{ flex: 0.5, marginBottom: 0 }}>
+                              <label className="form-label">Earned Score</label>
+                              <input name="score" type="number" className="form-control" required min={0} max={sub.assignment.pointsPossible} placeholder={`0-${sub.assignment.pointsPossible}`} />
+                            </div>
+
+                            <div className="form-group" style={{ flex: 1.5, marginBottom: 0 }}>
+                              <label className="form-label">Narrative Feedback Comments</label>
+                              <textarea
+                                name="feedback"
+                                className="form-control"
+                                required
+                                rows={isUsingDraft ? 4 : 1}
+                                defaultValue={isUsingDraft ? draft : ''}
+                                placeholder="Praise strengths or suggest topic remediation..."
+                                style={{ resize: 'vertical' }}
+                              />
+                            </div>
+
+                            <button type="submit" className="btn btn-success btn-sm">
+                              Submit Grade &amp; Recalculate
+                            </button>
+                          </form>
+                        );
+                      })()
                     ) : (
                       <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)' }}>
                         🔒 Grade submission is restricted to Section Teachers and SchoolManagers.

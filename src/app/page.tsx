@@ -18,6 +18,11 @@ export default async function DashboardPage() {
   
   // 2. Fetch failed background jobs
   const failedJobsCount = await db.backgroundJob.count({ where: { status: 'Failed' } });
+
+  // Dead letters are counted separately from failures on purpose: a Failed job will
+  // be retried, a DeadLettered one never will unless a human intervenes. Rolling
+  // them into one number hides the only one that actually needs a person.
+  const deadLetteredJobsCount = await db.backgroundJob.count({ where: { status: 'DeadLettered' } });
   
   // 3. Fetch ungraded submissions count
   const ungradedSubmissionsCount = await db.submission.count({ where: { status: 'Submitted' } });
@@ -141,6 +146,11 @@ export default async function DashboardPage() {
             <h3 style={{ fontSize: '1.8rem', margin: 0, color: failedJobsCount > 0 ? 'var(--color-danger)' : 'var(--color-text-main)' }}>
               {failedJobsCount}
             </h3>
+            {deadLetteredJobsCount > 0 && (
+              <Link href="/jobs" style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-danger-text)' }}>
+                ☠️ {deadLetteredJobsCount} dead-lettered →
+              </Link>
+            )}
           </div>
         </div>
 

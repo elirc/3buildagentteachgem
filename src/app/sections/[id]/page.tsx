@@ -9,6 +9,7 @@ import {
   createAssignmentAction,
   publishAssignmentAction,
   closeAssignmentAction,
+  promoteWaitlistAction,
 } from '../../actions';
 import { ASSIGNMENT_TYPES } from '@/domain/rules/assignments';
 import { revalidatePath } from 'next/cache';
@@ -164,6 +165,11 @@ export default async function SectionDetailPage({
     await closeAssignmentAction(formData.get('assignmentId') as string, activeUser.id);
   }
 
+  async function handlePromoteWaitlist() {
+    'use server';
+    await promoteWaitlistAction(sectionId);
+  }
+
   async function handleRunAnomalyAgent() {
     'use server';
     await runAgentAction({
@@ -264,9 +270,31 @@ export default async function SectionDetailPage({
             {/* WAITLIST ROSTER */}
             {waitlisted.length > 0 && (
               <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px dashed var(--color-border)' }}>
-                <h4 style={{ fontSize: '0.85rem', color: 'var(--color-warning-text)', marginBottom: '12px' }}>
-                  ⏳ Waitlisted Students ({waitlisted.length})
-                </h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h4 style={{ fontSize: '0.85rem', color: 'var(--color-warning-text)', margin: 0 }}>
+                    ⏳ Waitlisted Students ({waitlisted.length})
+                  </h4>
+
+                  {/* Manual promotion uses the same code path as the automatic one
+                      that fires on a drop. Two implementations of one fairness
+                      rule is how a queue quietly stops being fair. */}
+                  {['Admin', 'SchoolManager'].includes(activeUser.role) && (
+                    <form action={handlePromoteWaitlist}>
+                      <button
+                        type="submit"
+                        className="btn btn-primary btn-sm"
+                        disabled={enrolled.length >= section.capacity}
+                        title={
+                          enrolled.length >= section.capacity
+                            ? 'No free seat — the section is at capacity'
+                            : 'Promote the longest-waiting eligible student'
+                        }
+                      >
+                        Promote next ⬆️
+                      </button>
+                    </form>
+                  )}
+                </div>
                 <div className="table-wrapper" style={{ marginBottom: 0 }}>
                   <table className="data-table">
                     <thead>

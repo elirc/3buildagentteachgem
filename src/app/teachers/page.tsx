@@ -156,7 +156,9 @@ export default async function TeachersListPage() {
                 <div key={t.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
-                      <h3 style={{ fontSize: '1.1rem', margin: 0 }}>{t.firstName} {t.lastName}</h3>
+                      <h3 style={{ fontSize: '1.1rem', margin: 0 }}>
+                        <Link href={`/teachers/${t.id}`}>{t.firstName} {t.lastName}</Link>
+                      </h3>
                       <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
                         Department: {t.department} | Room: {t.officeLocation}
                       </span>

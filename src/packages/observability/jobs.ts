@@ -3,6 +3,7 @@ import { logger } from './logging';
 import { recordAuditEvent } from './audit';
 import { calculateSectionGrade } from '@/domain/rules/grades';
 import { resolveSubmissionStatus } from '@/domain/rules/coursework';
+import { composeGuardianDigest, startOfWeekUTC } from '@/domain/rules/digest';
 
 export type JobType =
   | 'EmailNotification'
@@ -424,8 +425,131 @@ export async function runJob(jobId: string): Promise<boolean> {
         break;
       }
 
+      case 'GuardianDigest': {
+        const { studentId } = payload;
+        if (!studentId) throw new Error('Missing parameter: studentId');
+
+        const periodStart = startOfWeekUTC(new Date());
+        const periodEnd = new Date(periodStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+        const student = await db.student.findUniqueOrThrow({
+          where: { id: studentId },
+          include: {
+            enrollments: {
+              where: { status: 'Enrolled' },
+              include: { classSection: { include: { course: true } } },
+            },
+            interventionPlans: { where: { status: 'Active' }, take: 1 },
+          },
+        });
+
+        const submissions = await db.submission.findMany({
+          where: { studentId },
+          include: { assignment: { include: { classSection: { include: { course: true } } } } },
+        });
+
+        const attendance = await db.attendance.findMany({
+          where: { studentId, date: { gte: periodStart, lt: periodEnd } },
+        });
+
+        const upcoming = await db.assignment.findMany({
+          where: {
+            status: 'Published',
+            dueDate: { gte: new Date(), lt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+            classSection: { enrollments: { some: { studentId, status: 'Enrolled' } } },
+          },
+          include: { classSection: { include: { course: true } } },
+          orderBy: { dueDate: 'asc' },
+        });
+
+        // ONLY 'Shared' notes. An allowlist, never a denylist: a new visibility
+        // level added later must default to invisible to a guardian, not
+        // visible because nobody remembered to exclude it.
+        const sharedNotes = await db.supportNote.findMany({
+          where: { studentId, visibility: 'Shared' },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        });
+
+        const composed = composeGuardianDigest({
+          student: {
+            firstName: student.firstName,
+            lastName: student.lastName,
+            guardianName: student.guardianName,
+          },
+          periodStart,
+          periodEnd,
+          sections: student.enrollments.map((e) => ({
+            courseCode: e.classSection.course.code,
+            courseTitle: e.classSection.course.title,
+            finalGrade: e.finalGrade,
+          })),
+          newGrades: submissions
+            .filter((s) => (s.status === 'Graded' || s.status === 'Returned') && s.gradedAt && s.gradedAt >= periodStart)
+            .map((s) => ({
+              assignmentTitle: s.assignment.title,
+              courseCode: s.assignment.classSection.course.code,
+              score: s.score,
+              pointsPossible: s.assignment.pointsPossible,
+            })),
+          absences: attendance.filter((a) => a.status === 'Absent').length,
+          tardies: attendance.filter((a) => a.status === 'Tardy').length,
+          missingAssignments: submissions
+            .filter((s) => s.status === 'Missing')
+            .map((s) => ({
+              assignmentTitle: s.assignment.title,
+              courseCode: s.assignment.classSection.course.code,
+            })),
+          upcoming: upcoming.map((a) => ({
+            assignmentTitle: a.title,
+            courseCode: a.classSection.course.code,
+            dueDate: a.dueDate,
+          })),
+          sharedNotes: sharedNotes.map((n) => ({ noteType: n.noteType, content: n.content })),
+          activePlan: student.interventionPlans[0]
+            ? {
+                summary: student.interventionPlans[0].summary,
+                followUpDate: student.interventionPlans[0].followUpDate,
+              }
+            : null,
+        });
+
+        // upsert on [studentId, periodStart]: regenerating a week updates the
+        // existing draft instead of stacking duplicates.
+        await db.guardianDigest.upsert({
+          where: { studentId_periodStart: { studentId, periodStart } },
+          create: {
+            studentId,
+            periodStart,
+            periodEnd,
+            status: 'Draft',
+            subject: composed.subject,
+            bodyText: composed.bodyText,
+            metricsJSON: JSON.stringify(composed.metrics),
+          },
+          update: {
+            subject: composed.subject,
+            bodyText: composed.bodyText,
+            metricsJSON: JSON.stringify(composed.metrics),
+            // Regeneration returns it to Draft: an approved-and-sent digest
+            // whose content silently changed would be a lie about what was sent.
+            status: 'Draft',
+            sentAt: null,
+          },
+        });
+
+        await logger.info({
+          service: 'BackgroundJobWorker',
+          message: `Guardian digest composed for student [${studentId}] covering ${periodStart.toISOString().slice(0, 10)}`,
+          entityType: 'BackgroundJob',
+          entityId: job.id,
+          metadata: composed.metrics,
+        });
+
+        break;
+      }
+
       case 'EmailNotification':
-      case 'GuardianDigest':
       case 'ReportGeneration':
       case 'EnrollmentSync':
       case 'AgentRun':

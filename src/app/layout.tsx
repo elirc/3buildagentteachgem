@@ -120,6 +120,7 @@ export default async function RootLayout({
                 <Link href="/courses" className="sidebar-link">📚 Course Catalog</Link>
                 <Link href="/sections" className="sidebar-link">🏫 Class Sections</Link>
                 <Link href="/interventions" className="sidebar-link">🩹 Support & Interventions</Link>
+                <Link href="/digests" className="sidebar-link">✉️ Guardian Digests</Link>
               </nav>
             </div>
 

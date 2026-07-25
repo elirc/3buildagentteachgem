@@ -219,8 +219,12 @@ export async function saveGradeAction(payload: {
   score: number;
   feedback: string;
   actorId: string;
+  /** Set when the teacher had an agent draft on screen while grading. */
+  agentRunId?: string;
+  /** True when the submitted feedback is byte-identical to the agent's draft. */
+  acceptedDraftVerbatim?: boolean;
 }) {
-  const { submissionId, score, feedback, actorId } = payload;
+  const { submissionId, score, feedback, actorId, agentRunId, acceptedDraftVerbatim } = payload;
   const before = await db.submission.findUniqueOrThrow({
     where: { id: submissionId },
     include: { assignment: true },
@@ -241,7 +245,12 @@ export async function saveGradeAction(payload: {
     },
   });
 
-  // Record audit
+  // Record audit.
+  //
+  // The agent metadata is the point of recording it at all: it distinguishes
+  // "a human wrote this feedback", "a human edited the agent's draft" and "a
+  // human clicked accept". Without it there is no way to answer later whether
+  // the assistance was actually useful — you would only know an agent ran.
   await recordAuditEvent({
     actorId,
     action: 'submission.grade',
@@ -249,6 +258,9 @@ export async function saveGradeAction(payload: {
     entityId: submissionId,
     before,
     after: submission,
+    metadata: agentRunId
+      ? { agentRunId, feedbackAcceptedVerbatim: !!acceptedDraftVerbatim }
+      : undefined,
   });
 
   // Trigger background job to recalculate the student averages in the class section

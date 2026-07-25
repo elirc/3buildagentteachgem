@@ -74,6 +74,20 @@ export async function processQueueAction() {
 }
 
 /**
+ * 2d. Enqueue a coursework sweep.
+ *
+ * Enqueued rather than executed inline: the sweep touches every overdue
+ * assignment in the school, and a request handler is the wrong place for
+ * unbounded work. It runs when the queue is drained, like everything else.
+ */
+export async function enqueueCourseworkSweepAction() {
+  const session = await getActiveUser();
+  const job = await enqueueJob('CourseworkSweep', { requestedBy: session.id, requestedAt: new Date().toISOString() });
+  revalidatePath('/jobs');
+  return { jobId: job.id };
+}
+
+/**
  * 3. Run Mock Agent Action
  */
 export async function runAgentAction(params: {

@@ -1,6 +1,7 @@
 import { db } from '@/db';
 import { logger } from './logging';
 import { recordAuditEvent } from './audit';
+import { notifyDeadLetter } from './notifications';
 import { calculateSectionGrade } from '@/domain/rules/grades';
 import { resolveSubmissionStatus } from '@/domain/rules/coursework';
 import { composeGuardianDigest, startOfWeekUTC } from '@/domain/rules/digest';
@@ -599,6 +600,13 @@ export async function runJob(jobId: string): Promise<boolean> {
       entityId: job.id,
       metadata: { error: errorMsg, attempts: job.attempts + 1 },
     });
+
+    // Only on dead-letter, not on every failure. A job with retries left will
+    // probably succeed on the next attempt, and alerting on transient failures
+    // is how an inbox becomes noise.
+    if (isDeadLetter) {
+      await notifyDeadLetter({ id: job.id, type: job.type, errorMessage: (err as Error).message });
+    }
 
     return false;
   }

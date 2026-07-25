@@ -10,69 +10,125 @@ export const USER_ROLES: UserRole[] = [
   'Viewer',
 ];
 
+/* ------------------------------------------------------------------------- *
+ * Permissions
+ *
+ * One table. Every gate in the app resolves through canPerformAction, so
+ * changing who may do something is a one-line edit here rather than a hunt
+ * through fifteen files.
+ *
+ * PermissionAction is a union rather than `string` on purpose. With a bare
+ * string, a typo like 'submision.grade' silently falls through to `default:
+ * return false` and locks everyone out except Admin — a permission bug that
+ * looks exactly like a deliberate restriction. As a union it is a compile
+ * error.
+ * ------------------------------------------------------------------------- */
+
+export const PERMISSION_ACTIONS = [
+  // Academic administration
+  'course.create',
+  'section.create',
+  'student.create',
+  'teacher.create',
+  'teacher.status.change',
+  // Enrolment
+  'enrollment.manage',
+  'enrollment.promote',
+  // Coursework and grading
+  'assignment.manage',
+  'submission.grade',
+  'attendance.record',
+  // Pastoral care
+  'supportNote.create',
+  'intervention.create',
+  'intervention.complete',
+  // Operations
+  'job.retry',
+  'job.requeue',
+  'job.process',
+  'logs.view',
+  'permissions.view',
+  // Agents
+  'agent.run.student',
+  'agent.run.teacher',
+  'agent.run.attendance',
+  'agent.run.feedback',
+  // Shared reads
+  'dashboard.view',
+  'student.profile.view',
+] as const;
+
+export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
+
 /**
- * Validates role authorization for system actions.
- * Perfect for demonstrating basic RBAC (Role-Based Access Control) to junior engineers.
+ * Which roles may perform each action, excluding Admin.
+ *
+ * Admin is handled by a short-circuit below rather than being listed 24 times.
+ * That is a real trade-off: it keeps the table readable, but it also means the
+ * table alone does not tell you the whole truth. describeAllowedRoles() exists
+ * so the UI never has to reimplement that nuance.
  */
-export function canPerformAction(role: string, action: string): boolean {
+const PERMISSION_MATRIX: Record<PermissionAction, UserRole[]> = {
+  'course.create': ['SchoolManager'],
+  'section.create': ['SchoolManager'],
+  'student.create': ['SchoolManager'],
+  'teacher.create': ['SchoolManager'],
+  'teacher.status.change': ['SchoolManager'],
+
+  'enrollment.manage': ['SchoolManager'],
+  'enrollment.promote': ['SchoolManager'],
+
+  'assignment.manage': ['SchoolManager', 'Teacher'],
+  'submission.grade': ['SchoolManager', 'Teacher'],
+  'attendance.record': ['SchoolManager', 'Teacher'],
+
+  'supportNote.create': ['SchoolManager', 'Teacher', 'Advisor'],
+  'intervention.create': ['SchoolManager', 'Advisor'],
+  'intervention.complete': ['SchoolManager', 'Advisor'],
+
+  'job.retry': ['SchoolManager'],
+  'job.requeue': ['SchoolManager'],
+  'job.process': ['SchoolManager'],
+  'logs.view': ['SchoolManager'],
+  'permissions.view': [],
+
+  'agent.run.student': ['SchoolManager', 'Teacher', 'Advisor'],
+  'agent.run.teacher': ['SchoolManager'],
+  'agent.run.attendance': ['SchoolManager', 'Teacher'],
+  'agent.run.feedback': ['SchoolManager', 'Teacher'],
+
+  // Everyone may open a dashboard. WHAT they see is a data-scoping question,
+  // not an action-gating one — see buildStudentScope.
+  'dashboard.view': ['SchoolManager', 'Teacher', 'Advisor', 'Student', 'Parent', 'Viewer'],
+  'student.profile.view': ['SchoolManager', 'Teacher', 'Advisor', 'Student', 'Parent', 'Viewer'],
+};
+
+export function canPerformAction(role: string, action: PermissionAction): boolean {
   const currentRole = role as UserRole;
   if (!USER_ROLES.includes(currentRole)) return false;
 
-  // Admin and SchoolManager bypass all restrictions
+  // Admin bypasses everything.
   if (currentRole === 'Admin') return true;
 
-  switch (action) {
-    // 1. Administrative operations (Courses, Sections, Teachers, Students)
-    case 'course.create':
-    case 'course.edit':
-    case 'course.delete':
-    case 'section.create':
-    case 'section.edit':
-    case 'section.delete':
-    case 'teacher.create':
-    case 'teacher.edit':
-    case 'teacher.delete':
-    case 'student.create':
-    case 'student.edit':
-    case 'student.delete':
-    case 'enrollment.manage': // Enroll / Drop students
-    case 'job.retry':         // Trigger background worker
-    case 'logs.view':         // Log explorer access
-      return currentRole === 'SchoolManager';
+  return PERMISSION_MATRIX[action]?.includes(currentRole) ?? false;
+}
 
-    // 2. Teacher specific operations
-    case 'assignment.create':
-    case 'assignment.edit':
-    case 'assignment.publish':
-    case 'submission.grade':  // Entering scores and feedback
-    case 'attendance.record': // Section attendance sheets
-    case 'teacher.workload.view':
-      return currentRole === 'Teacher' || currentRole === 'SchoolManager';
+/**
+ * Every role that may perform an action, Admin included.
+ *
+ * Used by the lock messages and the /permissions matrix so neither has to
+ * hardcode prose that can drift from the table. A "🔒 Admin only" label that
+ * lies is worse than no label.
+ */
+export function describeAllowedRoles(action: PermissionAction): UserRole[] {
+  return USER_ROLES.filter((role) => canPerformAction(role, action));
+}
 
-    // 3. Advisor operations
-    case 'intervention.create':
-    case 'intervention.edit':
-    case 'intervention.complete':
-    case 'support.notes.read.private': // Read advisor notes
-      return currentRole === 'Advisor' || currentRole === 'SchoolManager';
-
-    // 4. Shared dashboards and profiles
-    case 'dashboard.view':
-    case 'student.profile.view':
-      return true; // Everyone can see dashboards (subject to data masks)
-
-    // 5. Run Mock Agents
-    case 'agent.run.student':
-    case 'agent.run.atrisk':
-    case 'agent.run.attendance':
-      return ['Teacher', 'Advisor', 'SchoolManager'].includes(currentRole);
-
-    case 'agent.run.teacher':
-      return ['SchoolManager'].includes(currentRole);
-
-    default:
-      return false;
-  }
+/** Human-readable lock text, derived rather than written. */
+export function lockMessage(action: PermissionAction): string {
+  const roles = describeAllowedRoles(action);
+  if (roles.length === 0) return '🔒 This action is disabled.';
+  return `🔒 Requires one of: ${roles.join(', ')}.`;
 }
 
 /* ------------------------------------------------------------------------- *

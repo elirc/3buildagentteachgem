@@ -6,8 +6,9 @@ import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
 import { runJob, enqueueJob, requeueJob, processQueue } from '@/observability/jobs';
 import { recordAuditEvent } from '@/observability/audit';
+import { logger } from '@/observability/logging';
 import { executeAgentRun } from '@/agents/core/orchestrator';
-import { validateEnrollmentRules } from '@/domain/rules/enrollment';
+import { validateEnrollmentRules, selectWaitlistPromotion } from '@/domain/rules/enrollment';
 import {
   validateAssignmentInput,
   validateAssignmentTransition,
@@ -220,11 +221,101 @@ export async function dropStudentAction(enrollmentId: string, actorId: string) {
     after: enrollment,
   });
 
+  // A seat just freed up. Offer it to the waitlist before anything else can
+  // take it.
+  await promoteFromWaitlist(enrollment.classSectionId, actorId);
+
   // Recalculate grades in background
   await enqueueJob('GradeRecalculation', { sectionId: enrollment.classSectionId }, { classSectionId: enrollment.classSectionId });
 
   revalidatePath('/sections/' + enrollment.classSectionId);
   revalidatePath('/students/' + enrollment.studentId);
+}
+
+/**
+ * 5b. Give a freed seat to the longest-waiting eligible student.
+ *
+ * Shared by the automatic path (a drop) and the manual "Promote" button, so
+ * both routes apply identical fairness rules. Two code paths for one decision
+ * is how a queue quietly becomes unfair.
+ */
+export async function promoteFromWaitlist(classSectionId: string, actorId: string) {
+  const section = await db.classSection.findUniqueOrThrow({ where: { id: classSectionId } });
+
+  // Recount AFTER the drop has been committed. Reusing a count captured before
+  // the mutation is the classic bug in this function: it makes the section look
+  // full and silently skips the promotion.
+  const currentEnrollmentCount = await db.enrollment.count({
+    where: { classSectionId, status: 'Enrolled' },
+  });
+
+  const waitlisted = await db.enrollment.findMany({
+    where: { classSectionId, status: 'Waitlisted' },
+    include: { student: { select: { id: true, enrollmentStatus: true } } },
+  });
+
+  const decision = selectWaitlistPromotion({
+    candidates: waitlisted.map((w) => ({
+      enrollmentId: w.id,
+      studentId: w.studentId,
+      studentStatus: w.student.enrollmentStatus,
+      // createdAt is when the waitlist row was written, i.e. when they queued.
+      queuedAt: w.createdAt,
+    })),
+    currentEnrollmentCount,
+    sectionCapacity: section.capacity,
+    sectionStatus: section.status,
+  });
+
+  if (!decision.promote) {
+    await logger.info({
+      service: 'EnrollmentService',
+      message: `No waitlist promotion for section [${classSectionId}]: ${decision.reason}`,
+      entityType: 'ClassSection',
+      entityId: classSectionId,
+    });
+    return { promoted: false, reason: decision.reason };
+  }
+
+  const beforeRow = waitlisted.find((w) => w.id === decision.enrollmentId);
+
+  // UPDATE the existing waitlist row — never create a new Enrollment.
+  // @@unique([studentId, classSectionId]) means a second row is impossible, and
+  // trying would surface as a constraint violation instead of a promotion.
+  const promoted = await db.enrollment.update({
+    where: { id: decision.enrollmentId },
+    data: { status: 'Enrolled', enrolledAt: new Date() },
+  });
+
+  await recordAuditEvent({
+    actorId,
+    action: 'enrollment.promote',
+    entityType: 'Enrollment',
+    entityId: decision.enrollmentId,
+    before: beforeRow,
+    after: promoted,
+    metadata: { seatsBefore: currentEnrollmentCount, capacity: section.capacity },
+  });
+
+  await enqueueJob(
+    'EmailNotification',
+    { studentId: decision.studentId, classSectionId, reason: 'waitlist-promotion' },
+    { classSectionId, studentId: decision.studentId }
+  );
+  await enqueueJob('GradeRecalculation', { sectionId: classSectionId }, { classSectionId });
+
+  revalidatePath('/sections/' + classSectionId);
+  revalidatePath('/students/' + decision.studentId);
+
+  return { promoted: true, studentId: decision.studentId };
+}
+
+/**
+ * 5c. Manual promotion trigger for the section roster UI.
+ */
+export async function promoteWaitlistAction(classSectionId: string) {
+  const session = await getActiveUser();
+  return promoteFromWaitlist(classSectionId, session.id);
 }
 
 /**

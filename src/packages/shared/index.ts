@@ -1,4 +1,9 @@
-export type UserRole = 'Admin' | 'SchoolManager' | 'Teacher' | 'Student' | 'Advisor' | 'Parent' | 'Viewer';
+// UserRole is derived from the zod enum rather than declared twice. Two
+// hand-maintained copies of one list drift; a derived type cannot.
+export type { UserRole } from './schemas';
+export * from './schemas';
+
+import type { UserRole } from './schemas';
 
 export const USER_ROLES: UserRole[] = [
   'Admin',

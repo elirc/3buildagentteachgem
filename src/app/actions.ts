@@ -14,6 +14,18 @@ import {
   validateAssignmentTransition,
 } from '@/domain/rules/assignments';
 import { AgentType, AgentTargetType } from '@/agents/core/types';
+import {
+  parseInput,
+  enrollStudentInput,
+  dropStudentInput,
+  saveGradeInput,
+  recordAttendanceInput,
+  createSupportNoteInput,
+  createInterventionInput,
+  createAssignmentInput,
+  updateTeacherStatusInput,
+  runAgentInput,
+} from '@/shared/schemas';
 
 /**
  * 1. Simulates Authentication Switcher
@@ -70,7 +82,8 @@ export async function runAgentAction(params: {
   targetId: string;
   createdById: string;
 }) {
-  const runId = await executeAgentRun(params);
+  const input = parseInput(runAgentInput, params);
+  const runId = await executeAgentRun(input);
   revalidatePath('/');
   revalidatePath('/agent-runs');
   revalidatePath('/agent-runs/' + runId);
@@ -85,7 +98,7 @@ export async function enrollStudentAction(payload: {
   classSectionId: string;
   actorId: string;
 }) {
-  const { studentId, classSectionId, actorId } = payload;
+  const { studentId, classSectionId, actorId } = parseInput(enrollStudentInput, payload);
 
   // Fetch all facts for the enrollment domain validation rules
   const student = await db.student.findUniqueOrThrow({ where: { id: studentId } });
@@ -201,7 +214,12 @@ export async function enrollStudentAction(payload: {
 /**
  * 5. Drop Student Action
  */
-export async function dropStudentAction(enrollmentId: string, actorId: string) {
+export async function dropStudentAction(enrollmentIdRaw: string, actorIdRaw: string) {
+  const { enrollmentId, actorId } = parseInput(dropStudentInput, {
+    enrollmentId: enrollmentIdRaw,
+    actorId: actorIdRaw,
+  });
+
   const before = await db.enrollment.findUniqueOrThrow({ where: { id: enrollmentId } });
 
   const enrollment = await db.enrollment.update({
@@ -331,7 +349,8 @@ export async function saveGradeAction(payload: {
   /** True when the submitted feedback is byte-identical to the agent's draft. */
   acceptedDraftVerbatim?: boolean;
 }) {
-  const { submissionId, score, feedback, actorId, agentRunId, acceptedDraftVerbatim } = payload;
+  const { submissionId, score, feedback, actorId, agentRunId, acceptedDraftVerbatim } =
+    parseInput(saveGradeInput, payload);
   const before = await db.submission.findUniqueOrThrow({
     where: { id: submissionId },
     include: { assignment: true },
@@ -390,7 +409,7 @@ export async function recordAttendanceAction(payload: {
   records: Array<{ studentId: string; status: string; notes?: string }>;
   actorId: string;
 }) {
-  const { classSectionId, date, records, actorId } = payload;
+  const { classSectionId, date, records, actorId } = parseInput(recordAttendanceInput, payload);
   const targetDate = new Date(date);
 
   for (const item of records) {
@@ -458,12 +477,16 @@ export async function createAssignmentAction(payload: {
   dueDate: string;
   actorId: string;
 }) {
-  const dueDate = new Date(payload.dueDate);
+  const input = parseInput(createAssignmentInput, payload);
+  const dueDate = new Date(input.dueDate);
 
+  // Zod checked shape and type; the domain rule still owns the business
+  // meaning. Belt and braces on the two questions that are genuinely different:
+  // "is this well-formed?" and "is this allowed?".
   const validation = validateAssignmentInput({
-    title: payload.title,
-    type: payload.type,
-    pointsPossible: payload.pointsPossible,
+    title: input.title,
+    type: input.type,
+    pointsPossible: input.pointsPossible,
     dueDate,
   });
 
@@ -476,26 +499,26 @@ export async function createAssignmentAction(payload: {
   // submission rows to the whole roster.
   const assignment = await db.assignment.create({
     data: {
-      classSectionId: payload.classSectionId,
-      title: payload.title.trim(),
-      description: payload.description,
-      type: payload.type,
+      classSectionId: input.classSectionId,
+      title: input.title.trim(),
+      description: input.description,
+      type: input.type,
       status: 'Draft',
       dueDate,
-      pointsPossible: payload.pointsPossible,
-      createdById: payload.actorId,
+      pointsPossible: input.pointsPossible,
+      createdById: input.actorId,
     },
   });
 
   await recordAuditEvent({
-    actorId: payload.actorId,
+    actorId: input.actorId,
     action: 'assignment.create',
     entityType: 'Assignment',
     entityId: assignment.id,
     after: assignment,
   });
 
-  revalidatePath('/sections/' + payload.classSectionId);
+  revalidatePath('/sections/' + input.classSectionId);
   return assignment;
 }
 
@@ -607,34 +630,31 @@ export async function updateTeacherStatusAction(payload: {
   employmentStatus: string;
   actorId: string;
 }) {
-  const LEGAL = ['Active', 'OnLeave', 'Inactive'];
-  if (!LEGAL.includes(payload.employmentStatus)) {
-    throw new Error(`Employment status must be one of: ${LEGAL.join(', ')}.`);
-  }
+  const input = parseInput(updateTeacherStatusInput, payload);
 
-  const before = await db.teacher.findUniqueOrThrow({ where: { id: payload.teacherId } });
+  const before = await db.teacher.findUniqueOrThrow({ where: { id: input.teacherId } });
 
   const teacher = await db.teacher.update({
-    where: { id: payload.teacherId },
-    data: { employmentStatus: payload.employmentStatus },
+    where: { id: input.teacherId },
+    data: { employmentStatus: input.employmentStatus },
   });
 
   const liveSections = await db.classSection.count({
-    where: { teacherId: payload.teacherId, status: 'Active' },
+    where: { teacherId: input.teacherId, status: 'Active' },
   });
 
   await recordAuditEvent({
-    actorId: payload.actorId,
+    actorId: input.actorId,
     action: 'teacher.status.change',
     entityType: 'Teacher',
-    entityId: payload.teacherId,
+    entityId: input.teacherId,
     before,
     after: teacher,
     metadata: { liveSectionsAtChange: liveSections },
   });
 
   revalidatePath('/teachers');
-  revalidatePath('/teachers/' + payload.teacherId);
+  revalidatePath('/teachers/' + input.teacherId);
   return teacher;
 }
 
@@ -648,19 +668,21 @@ export async function createSupportNoteAction(payload: {
   noteType: string;
   content: string;
 }) {
+  const input = parseInput(createSupportNoteInput, payload);
+
   const note = await db.supportNote.create({
-    data: payload,
+    data: input,
   });
 
   await recordAuditEvent({
-    actorId: payload.authorId,
+    actorId: input.authorId,
     action: 'supportNote.create',
     entityType: 'SupportNote',
     entityId: note.id,
     after: note,
   });
 
-  revalidatePath('/students/' + payload.studentId);
+  revalidatePath('/students/' + input.studentId);
   return note;
 }
 
@@ -675,27 +697,29 @@ export async function createInterventionPlanAction(payload: {
   recommendedActions: string;
   followUpDate: string;
 }) {
+  const input = parseInput(createInterventionInput, payload);
+
   const plan = await db.interventionPlan.create({
     data: {
-      studentId: payload.studentId,
-      createdById: payload.createdById,
+      studentId: input.studentId,
+      createdById: input.createdById,
       status: 'Active',
-      riskArea: payload.riskArea,
-      summary: payload.summary,
-      recommendedActions: payload.recommendedActions,
-      followUpDate: new Date(payload.followUpDate),
+      riskArea: input.riskArea,
+      summary: input.summary,
+      recommendedActions: input.recommendedActions,
+      followUpDate: new Date(input.followUpDate),
     },
   });
 
   await recordAuditEvent({
-    actorId: payload.createdById,
+    actorId: input.createdById,
     action: 'intervention.create',
     entityType: 'InterventionPlan',
     entityId: plan.id,
     after: plan,
   });
 
-  revalidatePath('/students/' + payload.studentId);
+  revalidatePath('/students/' + input.studentId);
   revalidatePath('/interventions');
   return plan;
 }

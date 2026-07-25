@@ -2,7 +2,7 @@ import React from 'react';
 import { notFound } from 'next/navigation';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
-import { formatDate, formatDateTime, parseSubjects } from '@/shared';
+import { formatDate, formatDateTime, parseSubjects, canPerformAction, lockMessage } from '@/shared';
 import { calculateTeacherWorkload } from '@/domain/rules/workload';
 import { calculateSectionGrade } from '@/domain/rules/grades';
 import { runAgentAction, updateTeacherStatusAction } from '../../actions';
@@ -98,7 +98,8 @@ export default async function TeacherDetailPage({ params }: { params: { id: stri
     take: 5,
   });
 
-  const canManage = ['Admin', 'SchoolManager'].includes(activeUser.role);
+  const canChangeStatus = canPerformAction(activeUser.role, 'teacher.status.change');
+  const canRunAgent = canPerformAction(activeUser.role, 'agent.run.teacher');
 
   async function handleRunAgent() {
     'use server';
@@ -175,7 +176,7 @@ export default async function TeacherDetailPage({ params }: { params: { id: stri
           <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '6px' }}>
             Employment
           </span>
-          {canManage ? (
+          {canChangeStatus ? (
             <form action={handleStatusChange} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
               <select name="employmentStatus" className="form-control" defaultValue={teacher.employmentStatus} style={{ padding: '4px 8px', fontSize: '0.8rem' }}>
                 {EMPLOYMENT_STATUSES.map((s) => (
@@ -330,13 +331,13 @@ export default async function TeacherDetailPage({ params }: { params: { id: stri
               warnings into staffing recommendations with an owner and an urgency.
             </p>
 
-            {canManage ? (
+            {canRunAgent ? (
               <form action={handleRunAgent} style={{ marginBottom: '16px' }}>
                 <button type="submit" className="btn btn-primary btn-sm">Run Workload Analysis 🚀</button>
               </form>
             ) : (
               <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '12px' }}>
-                🔒 Switch to SchoolManager or Admin to run staffing diagnostics.
+                {lockMessage('agent.run.teacher')}
               </span>
             )}
 

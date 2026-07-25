@@ -1,7 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
-import { formatDate, parseSubjects, serializeSubjects } from '@/shared';
+import { formatDate, parseSubjects, serializeSubjects, canPerformAction, lockMessage } from '@/shared';
 import { calculateTeacherWorkload } from '@/domain/rules/workload';
 import { calculateSectionGrade } from '@/domain/rules/grades';
 import { recordAuditEvent } from '@/observability/audit';
@@ -230,7 +230,7 @@ export default async function TeachersListPage() {
                   )}
 
                   {/* Run insight agent (restricted) */}
-                  {['Admin', 'SchoolManager'].includes(activeUser.role) ? (
+                  {canPerformAction(activeUser.role, 'agent.run.teacher') ? (
                     <form action={triggerTeacherAgent} style={{ marginTop: 'auto' }}>
                       <input type="hidden" name="teacherId" value={t.id} />
                       <button type="submit" className="btn btn-secondary btn-sm" style={{ width: '100%' }}>
@@ -239,7 +239,7 @@ export default async function TeachersListPage() {
                     </form>
                   ) : (
                     <span style={{ fontSize: '0.7rem', color: 'var(--color-text-light)', textAlign: 'center' }}>
-                      🔒 Switch to SchoolManager to execute workload diagnostics.
+                      {lockMessage('agent.run.teacher')}
                     </span>
                   )}
                 </div>
@@ -250,7 +250,7 @@ export default async function TeachersListPage() {
         </div>
 
         {/* REGISTRATION FORM PANEL (RBAC Admin/SchoolManager) */}
-        {['Admin', 'SchoolManager'].includes(activeUser.role) ? (
+        {canPerformAction(activeUser.role, 'teacher.create') ? (
           <div style={{ flex: 1 }}>
             <div className="card">
               <h3 style={{ fontSize: '1.1rem', marginBottom: '16px' }}>➕ Register Teacher Profile</h3>

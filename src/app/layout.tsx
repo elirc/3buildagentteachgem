@@ -133,6 +133,7 @@ export default async function RootLayout({
                 <Link href="/logs" className="sidebar-link">📝 Log Explorer</Link>
                 <Link href="/agent-runs" className="sidebar-link">🤖 Agent Reasoning Runs</Link>
                 <Link href="/audits" className="sidebar-link">🔐 Audit History</Link>
+                <Link href="/permissions" className="sidebar-link">🛡️ Permission Matrix</Link>
               </nav>
             </div>
 

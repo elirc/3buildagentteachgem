@@ -1,7 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
-import { formatDate } from '@/shared';
+import { formatDate, canPerformAction, lockMessage } from '@/shared';
 import { recordAuditEvent } from '@/observability/audit';
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
@@ -98,7 +98,7 @@ export default async function InterventionsListPage() {
                     <span className={`badge ${badge}`}>{p.status}</span>
                   </td>
                   <td>
-                    {isActive && ['Admin', 'SchoolManager', 'Advisor'].includes(activeUser.role) ? (
+                    {isActive && canPerformAction(activeUser.role, 'intervention.complete') ? (
                       <form action={completePlanAction}>
                         <input type="hidden" name="planId" value={p.id} />
                         <button type="submit" className="btn btn-secondary btn-sm">

@@ -1,7 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
-import { formatDate, formatDateTime, getRiskBadgeStyle } from '@/shared';
+import { formatDate, formatDateTime, getRiskBadgeStyle, canPerformAction, lockMessage } from '@/shared';
 import { calculateSectionGrade } from '@/domain/rules/grades';
 import { calculateStudentRisk } from '@/domain/rules/risk';
 import {
@@ -215,7 +215,7 @@ export default async function StudentDetailPage({
         </p>
         
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '20px' }}>
-          {['Admin', 'SchoolManager', 'Teacher', 'Advisor'].includes(activeUser.role) ? (
+          {canPerformAction(activeUser.role, 'agent.run.student') ? (
             <>
               <form action={handleRunSummaryAgent}>
                 <button type="submit" className="btn btn-primary btn-sm">
@@ -231,7 +231,7 @@ export default async function StudentDetailPage({
             </>
           ) : (
             <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-              🔒 Switching active role to Teacher, Advisor, or SchoolManager is required to execute academic agents.
+              {lockMessage('agent.run.student')}
             </span>
           )}
         </div>
@@ -318,7 +318,7 @@ export default async function StudentDetailPage({
                           </td>
                           <td><strong>{e.finalGrade !== null ? `${e.finalGrade}%` : 'Pending'}</strong></td>
                           <td>
-                            {e.status === 'Enrolled' && ['Admin', 'SchoolManager'].includes(activeUser.role) ? (
+                            {e.status === 'Enrolled' && canPerformAction(activeUser.role, 'enrollment.manage') ? (
                               <form action={handleDrop}>
                                 <input type="hidden" name="enrollmentId" value={e.id} />
                                 <button type="submit" className="btn btn-danger btn-sm">
@@ -338,7 +338,7 @@ export default async function StudentDetailPage({
             )}
 
             {/* ENROLL NEW STUDENT DROPDOWN PANEL (RBAC SchoolManager/Admin only) */}
-            {['Admin', 'SchoolManager'].includes(activeUser.role) && availableSections.length > 0 && (
+            {canPerformAction(activeUser.role, 'enrollment.manage') && availableSections.length > 0 && (
               <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid var(--color-border)' }}>
                 <h4 style={{ fontSize: '0.85rem', marginBottom: '12px' }}>➕ Register Student into a Section</h4>
                 <form action={handleEnroll} style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
@@ -497,7 +497,7 @@ export default async function StudentDetailPage({
             </div>
 
             {/* ADD SUPPORT NOTE FORM (Restricted) */}
-            {['Admin', 'SchoolManager', 'Teacher', 'Advisor'].includes(activeUser.role) ? (
+            {canPerformAction(activeUser.role, 'supportNote.create') ? (
               <form action={handleCreateNote} style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '16px', borderTop: '1px solid var(--color-border)' }}>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <textarea name="content" className="form-control" placeholder="Write student behavioral or academic observation..." rows={3} required style={{ resize: 'none' }} />
@@ -526,7 +526,7 @@ export default async function StudentDetailPage({
               </form>
             ) : (
               <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)', display: 'block', textAlign: 'center' }}>
-                🔒 Only teachers/advisors can add support notes.
+                {lockMessage('supportNote.create')}
               </span>
             )}
           </div>
@@ -567,7 +567,7 @@ export default async function StudentDetailPage({
             </div>
 
             {/* CREATE PLAN (Only Advisors / Managers) */}
-            {['Admin', 'SchoolManager', 'Advisor'].includes(activeUser.role) ? (
+            {canPerformAction(activeUser.role, 'intervention.create') ? (
               <form action={handleCreateIntervention} style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '16px', borderTop: '1px solid var(--color-border)' }}>
                 <h4 style={{ fontSize: '0.85rem', margin: 0 }}>➕ Spawn New Intervention Plan</h4>
                 
@@ -599,7 +599,7 @@ export default async function StudentDetailPage({
               </form>
             ) : (
               <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)', display: 'block', textAlign: 'center' }}>
-                🔒 Intervention Plan activation is restricted to Advisors/SchoolManagers.
+                {lockMessage('intervention.create')}
               </span>
             )}
           </div>

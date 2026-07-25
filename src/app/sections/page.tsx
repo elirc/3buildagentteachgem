@@ -2,7 +2,7 @@ import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
 import { recordAuditEvent } from '@/observability/audit';
-import { parseSchedule, formatSchedule, serializeSchedule, SCHEDULE_DAYS } from '@/shared';
+import { parseSchedule, formatSchedule, serializeSchedule, SCHEDULE_DAYS, canPerformAction, lockMessage } from '@/shared';
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
 
@@ -135,7 +135,7 @@ export default async function SectionsListPage() {
         </div>
 
         {/* SECTION CREATION FORM (RBAC restricted) */}
-        {['Admin', 'SchoolManager'].includes(activeUser.role) ? (
+        {canPerformAction(activeUser.role, 'section.create') ? (
           <div style={{ flex: 1 }}>
             <div className="card">
               <h3 style={{ fontSize: '1.1rem', marginBottom: '16px' }}>➕ Create Class Section</h3>

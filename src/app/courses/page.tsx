@@ -1,6 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
+import { canPerformAction, lockMessage } from '@/shared';
 import { recordAuditEvent } from '@/observability/audit';
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
@@ -87,7 +88,7 @@ export default async function CoursesListPage() {
         </div>
 
         {/* REGISTRATION FORM PANEL (RBAC Restricted) */}
-        {['Admin', 'SchoolManager'].includes(activeUser.role) ? (
+        {canPerformAction(activeUser.role, 'course.create') ? (
           <div style={{ flex: 1 }}>
             <div className="card">
               <h3 style={{ fontSize: '1.1rem', marginBottom: '16px' }}>➕ Create Course Syllabus</h3>

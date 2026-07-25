@@ -477,6 +477,49 @@ export async function closeAssignmentAction(assignmentId: string, actorId: strin
 }
 
 /**
+ * 7e. Update a teacher's employment status.
+ *
+ * Not cosmetic: validateEnrollmentRules refuses any enrolment into a section
+ * whose teacher is Inactive, so this flag can silently close registration for
+ * every class they own. The audit event is what makes that traceable later.
+ */
+export async function updateTeacherStatusAction(payload: {
+  teacherId: string;
+  employmentStatus: string;
+  actorId: string;
+}) {
+  const LEGAL = ['Active', 'OnLeave', 'Inactive'];
+  if (!LEGAL.includes(payload.employmentStatus)) {
+    throw new Error(`Employment status must be one of: ${LEGAL.join(', ')}.`);
+  }
+
+  const before = await db.teacher.findUniqueOrThrow({ where: { id: payload.teacherId } });
+
+  const teacher = await db.teacher.update({
+    where: { id: payload.teacherId },
+    data: { employmentStatus: payload.employmentStatus },
+  });
+
+  const liveSections = await db.classSection.count({
+    where: { teacherId: payload.teacherId, status: 'Active' },
+  });
+
+  await recordAuditEvent({
+    actorId: payload.actorId,
+    action: 'teacher.status.change',
+    entityType: 'Teacher',
+    entityId: payload.teacherId,
+    before,
+    after: teacher,
+    metadata: { liveSectionsAtChange: liveSections },
+  });
+
+  revalidatePath('/teachers');
+  revalidatePath('/teachers/' + payload.teacherId);
+  return teacher;
+}
+
+/**
  * 8. Create Support Note Action
  */
 export async function createSupportNoteAction(payload: {

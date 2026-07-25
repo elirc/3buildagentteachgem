@@ -1,6 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
+import { buildStudentScope, isUnscopedRole } from '@/shared/scope';
 import { formatDateTime } from '@/shared';
 import Link from 'next/link';
 
@@ -9,10 +10,27 @@ export const revalidate = 0;
 export default async function AgentRunsListPage() {
   const activeUser = await getActiveUser();
 
-  // Fetch all runs
-  const runs = await db.agentRun.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
+  // Agent runs are scoped by their target. A run about a student is student
+  // data — the reasoning trace quotes their grades and attendance verbatim, so
+  // leaking the run leaks the record.
+  //
+  // Runs targeting a Teacher or a ClassSection carry no per-student detail, so
+  // scoped roles simply do not see them rather than needing a second rule.
+  let runs;
+  if (isUnscopedRole(activeUser.role)) {
+    runs = await db.agentRun.findMany({ orderBy: { createdAt: 'desc' } });
+  } else {
+    const visibleStudents = await db.student.findMany({
+      where: buildStudentScope(activeUser),
+      select: { id: true },
+    });
+    const visibleIds = visibleStudents.map((s) => s.id);
+
+    runs = await db.agentRun.findMany({
+      where: { targetType: 'Student', targetId: { in: visibleIds } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>

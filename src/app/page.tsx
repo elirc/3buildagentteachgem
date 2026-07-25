@@ -1,6 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
+import { buildStudentScope, describeStudentScope } from '@/shared/scope';
 import { formatDate, formatDateTime, getRiskBadgeStyle } from '@/shared';
 import { calculateSectionGrade } from '@/domain/rules/grades';
 import { calculateStudentRisk, compareByRiskSeverity, isEscalationWorthy } from '@/domain/rules/risk';
@@ -30,7 +31,13 @@ export default async function DashboardPage() {
   // 4. Calculate risk scores for all students in real time to summarize on Dashboard!
   // To avoid performance issues in huge databases, enterprise platforms use computed caches, 
   // but for a mid-sized monolith of 4-100 students, calculating in real-time is instant and displays 100% correct data!
+  // The risk distribution respects the same scope as /students, so a Student
+  // role sees their own status rather than the whole school's.
+  const studentScope = buildStudentScope(activeUser);
+  const scopeNote = describeStudentScope(activeUser);
+
   const students = await db.student.findMany({
+    where: studentScope,
     include: {
       attendance: true,
       submissions: { include: { assignment: true } },
@@ -104,6 +111,11 @@ export default async function DashboardPage() {
           <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
             System overview and instructional diagnostics for school managers, advisors, and admin roles.
           </p>
+          {scopeNote && (
+            <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: 'var(--color-primary)', fontWeight: 600 }}>
+              🔒 {scopeNote}
+            </p>
+          )}
         </div>
         <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
           Active Session: <strong>{activeUser.role}</strong>

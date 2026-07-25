@@ -1,7 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
-import { formatDateTime } from '@/shared';
+import { formatDateTime, canPerformAction, lockMessage } from '@/shared';
 import { retryJobAction, requeueJobAction, processQueueAction } from '../actions';
 import { canRunJob } from '@/observability/jobs';
 import { revalidatePath } from 'next/cache';
@@ -73,7 +73,7 @@ export default async function BackgroundJobsPage() {
           </div>
         ))}
 
-        {['Admin', 'SchoolManager'].includes(activeUser.role) && (
+        {canPerformAction(activeUser.role, 'job.process') && (
           <form action={handleProcessQueue} style={{ marginLeft: 'auto' }}>
             <button type="submit" className="btn btn-primary btn-sm" disabled={runnableCount === 0}>
               ▶️ Process queue ({runnableCount})
@@ -168,7 +168,7 @@ export default async function BackgroundJobsPage() {
                     )}
                   </td>
                   <td>
-                    {['Admin', 'SchoolManager'].includes(activeUser.role) ? (
+                    {canPerformAction(activeUser.role, 'job.retry') ? (
                       job.status === 'DeadLettered' ? (
                         // A dead letter is a decision point, not a retry. Requeue resets
                         // the attempt budget but deliberately does not execute the job.
@@ -187,7 +187,7 @@ export default async function BackgroundJobsPage() {
                         </form>
                       )
                     ) : (
-                      <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)' }}>🔒 Admin Only</span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)' }}>{lockMessage('job.retry')}</span>
                     )}
                   </td>
                 </tr>

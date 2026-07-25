@@ -1,7 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
-import { formatDate, getRiskBadgeStyle } from '@/shared';
+import { formatDate, getRiskBadgeStyle, canPerformAction, lockMessage } from '@/shared';
 import { calculateSectionGrade } from '@/domain/rules/grades';
 import { calculateStudentRisk } from '@/domain/rules/risk';
 import { recordAuditEvent } from '@/observability/audit';
@@ -152,7 +152,7 @@ export default async function StudentsListPage() {
         </div>
 
         {/* CREATE STUDENT FORM (RBAC restricted to SchoolManager / Admin) */}
-        {['Admin', 'SchoolManager'].includes(activeUser.role) ? (
+        {canPerformAction(activeUser.role, 'student.create') ? (
           <div style={{ flex: 1 }}>
             <div className="card">
               <h3 style={{ fontSize: '1.1rem', marginBottom: '16px' }}>➕ Create Student Profile</h3>

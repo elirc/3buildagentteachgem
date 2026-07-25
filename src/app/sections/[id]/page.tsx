@@ -1,7 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
-import { formatDate, formatDateTime, parseSchedule, formatSchedule } from '@/shared';
+import { formatDate, formatDateTime, parseSchedule, formatSchedule, canPerformAction, lockMessage } from '@/shared';
 import {
   saveGradeAction,
   recordAttendanceAction,
@@ -61,7 +61,7 @@ export default async function SectionDetailPage({
     return acc;
   }, {});
 
-  const canManageCoursework = ['Admin', 'SchoolManager', 'Teacher'].includes(activeUser.role);
+  const canManageCoursework = canPerformAction(activeUser.role, 'assignment.manage');
 
   // Latest AssignmentFeedback run per ungraded submission, in ONE query.
   // Ordered newest-first, then reduced keeping the first sighting of each
@@ -278,7 +278,7 @@ export default async function SectionDetailPage({
                   {/* Manual promotion uses the same code path as the automatic one
                       that fires on a drop. Two implementations of one fairness
                       rule is how a queue quietly stops being fair. */}
-                  {['Admin', 'SchoolManager'].includes(activeUser.role) && (
+                  {canPerformAction(activeUser.role, 'enrollment.promote') && (
                     <form action={handlePromoteWaitlist}>
                       <button
                         type="submit"
@@ -531,7 +531,7 @@ export default async function SectionDetailPage({
                       return (
                         <div style={{ marginBottom: '16px' }}>
                           {!run ? (
-                            ['Admin', 'SchoolManager', 'Teacher'].includes(activeUser.role) && (
+                            canPerformAction(activeUser.role, 'agent.run.feedback') && (
                               <form action={handleDraftFeedback}>
                                 <input type="hidden" name="submissionId" value={sub.id} />
                                 <button type="submit" className="btn btn-secondary btn-sm">
@@ -611,7 +611,7 @@ export default async function SectionDetailPage({
                     })()}
 
                     {/* Form to submit grade */}
-                    {['Admin', 'SchoolManager', 'Teacher'].includes(activeUser.role) ? (
+                    {canPerformAction(activeUser.role, 'submission.grade') ? (
                       (() => {
                         const run = latestFeedbackRun.get(sub.id);
                         const output = run?.outputJSON ? JSON.parse(run.outputJSON) : null;
@@ -650,7 +650,7 @@ export default async function SectionDetailPage({
                       })()
                     ) : (
                       <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)' }}>
-                        🔒 Grade submission is restricted to Section Teachers and SchoolManagers.
+                        {lockMessage('submission.grade')}
                       </span>
                     )}
 
@@ -672,7 +672,7 @@ export default async function SectionDetailPage({
               Select a calendar date to log class presence status. Submitting schedules an <code>AttendanceSummary</code> data consolidation report.
             </p>
 
-            {['Admin', 'SchoolManager', 'Teacher'].includes(activeUser.role) ? (
+            {canPerformAction(activeUser.role, 'attendance.record') ? (
               <form action={handleAttendanceSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 
                 <div className="form-group">
@@ -730,7 +730,7 @@ export default async function SectionDetailPage({
               </form>
             ) : (
               <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)', display: 'block', textAlign: 'center' }}>
-                🔒 Recording daily attendance sheets is restricted to Section Teachers and SchoolManagers.
+                {lockMessage('attendance.record')}
               </span>
             )}
           </div>
@@ -744,7 +744,7 @@ export default async function SectionDetailPage({
               Triggers the diagnostic agent to audit historical attendance sheets for consecutive absence streaks or date wide field-trip sync drop-offs.
             </p>
 
-            {['Admin', 'SchoolManager', 'Teacher'].includes(activeUser.role) ? (
+            {canPerformAction(activeUser.role, 'agent.run.attendance') ? (
               <form action={handleRunAnomalyAgent} style={{ marginBottom: '16px' }}>
                 <button type="submit" className="btn btn-primary btn-sm" style={{ backgroundColor: 'var(--color-info)', borderColor: 'var(--color-info)' }}>
                   Audit Section Attendance 🔍
@@ -752,7 +752,7 @@ export default async function SectionDetailPage({
               </form>
             ) : (
               <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)', display: 'block', marginBottom: '12px' }}>
-                🔒 Switch to Teacher or Manager to launch attendance anomalies audits.
+                {lockMessage('agent.run.attendance')}
               </span>
             )}
 

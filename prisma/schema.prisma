@@ -71,6 +71,7 @@ model Student {
   attendance        Attendance[]
   supportNotes      SupportNote[]
   interventionPlans InterventionPlan[]
+  guardianDigests   GuardianDigest[]
 }
 
 // 4. Course
@@ -283,4 +284,24 @@ model AuditEvent {
   afterJSON    String?
   metadataJSON String?
   createdAt    DateTime @default(now())
+}
+
+// 16. Guardian Digest (a composed, reviewable weekly summary)
+model GuardianDigest {
+  id           String   @id @default(uuid())
+  studentId    String
+  student      Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  periodStart  DateTime
+  periodEnd    DateTime
+  status       String   // Draft, Sent, Failed
+  subject      String
+  bodyText     String
+  metricsJSON  String   // the numbers behind the prose, for rendering and debugging
+  sentAt       DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Regenerating a week must update the existing draft rather than pile up
+  // duplicates, so the period start is part of the identity.
+  @@unique([studentId, periodStart])
 }

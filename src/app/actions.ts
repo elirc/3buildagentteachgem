@@ -8,6 +8,10 @@ import { runJob, enqueueJob, requeueJob } from '@/observability/jobs';
 import { recordAuditEvent } from '@/observability/audit';
 import { executeAgentRun } from '@/agents/core/orchestrator';
 import { validateEnrollmentRules } from '@/domain/rules/enrollment';
+import {
+  validateAssignmentInput,
+  validateAssignmentTransition,
+} from '@/domain/rules/assignments';
 import { AgentType, AgentTargetType } from '@/agents/core/types';
 
 /**
@@ -135,6 +139,38 @@ export async function enrollStudentAction(payload: {
     entityId: enrollment.id,
     after: enrollment,
   });
+
+  // Backfill submission rows for work that was already published before this
+  // student joined. Without this, a late joiner has no row for those
+  // assignments and is invisible in the gradebook — not "missing", just absent
+  // from the grid, which is a much harder bug to notice than a red cell.
+  const publishedAssignments = await db.assignment.findMany({
+    where: { classSectionId, status: { in: ['Published', 'Closed'] } },
+    select: { id: true },
+  });
+
+  if (publishedAssignments.length > 0) {
+    // Prisma's `skipDuplicates` is NOT supported on SQLite, so the de-duplication
+    // is done explicitly: read what already exists, then insert only the gap.
+    // Slightly more code, but it also makes the intent visible instead of hiding
+    // it in a flag.
+    const existing = await db.submission.findMany({
+      where: { studentId, assignmentId: { in: publishedAssignments.map((a) => a.id) } },
+      select: { assignmentId: true },
+    });
+    const alreadyHas = new Set(existing.map((e) => e.assignmentId));
+    const missing = publishedAssignments.filter((a) => !alreadyHas.has(a.id));
+
+    if (missing.length > 0) {
+      await db.submission.createMany({
+        data: missing.map((a) => ({
+          assignmentId: a.id,
+          studentId,
+          status: 'NotStarted',
+        })),
+      });
+    }
+  }
 
   // Schedule background Grade Recalculation job
   await enqueueJob('GradeRecalculation', { sectionId: classSectionId }, { classSectionId });
@@ -289,6 +325,155 @@ export async function recordAttendanceAction(payload: {
   revalidatePath('/sections/' + classSectionId + '/attendance');
   revalidatePath('/students');
   return { success: true };
+}
+
+/**
+ * 7b. Create Assignment (always starts as a Draft)
+ */
+export async function createAssignmentAction(payload: {
+  classSectionId: string;
+  title: string;
+  description: string;
+  type: string;
+  pointsPossible: number;
+  dueDate: string;
+  actorId: string;
+}) {
+  const dueDate = new Date(payload.dueDate);
+
+  const validation = validateAssignmentInput({
+    title: payload.title,
+    type: payload.type,
+    pointsPossible: payload.pointsPossible,
+    dueDate,
+  });
+
+  if (!validation.isValid) {
+    throw new Error(validation.errors.join(' '));
+  }
+
+  // New assignments are always Drafts. Creating and publishing are separate
+  // decisions: publishing is the irreversible one, because it fans out
+  // submission rows to the whole roster.
+  const assignment = await db.assignment.create({
+    data: {
+      classSectionId: payload.classSectionId,
+      title: payload.title.trim(),
+      description: payload.description,
+      type: payload.type,
+      status: 'Draft',
+      dueDate,
+      pointsPossible: payload.pointsPossible,
+      createdById: payload.actorId,
+    },
+  });
+
+  await recordAuditEvent({
+    actorId: payload.actorId,
+    action: 'assignment.create',
+    entityType: 'Assignment',
+    entityId: assignment.id,
+    after: assignment,
+  });
+
+  revalidatePath('/sections/' + payload.classSectionId);
+  return assignment;
+}
+
+/**
+ * 7c. Publish an Assignment — the fan-out step.
+ */
+export async function publishAssignmentAction(assignmentId: string, actorId: string) {
+  const before = await db.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+
+  const transition = validateAssignmentTransition(before.status, 'Published');
+  if (!transition.isValid) {
+    throw new Error(transition.reason || 'Illegal assignment transition.');
+  }
+
+  // Only currently-enrolled students get a submission row. Waitlisted and
+  // dropped students are deliberately excluded: a waitlisted student has no
+  // seat, and creating work for someone who may never join the section would
+  // show up in their missing-assignment count.
+  const roster = await db.enrollment.findMany({
+    where: { classSectionId: before.classSectionId, status: 'Enrolled' },
+    select: { studentId: true },
+  });
+
+  const assignment = await db.assignment.update({
+    where: { id: assignmentId },
+    data: { status: 'Published' },
+  });
+
+  // Prisma's `skipDuplicates` is not available on SQLite, so existing rows are
+  // filtered out explicitly. The transition rule already blocks a second
+  // publish, but this makes the fan-out safe to re-run if a publish ever dies
+  // half-way — belt and braces on the one irreversible step.
+  const existing = await db.submission.findMany({
+    where: { assignmentId },
+    select: { studentId: true },
+  });
+  const alreadyHas = new Set(existing.map((e) => e.studentId));
+  const toCreate = roster.filter((r) => !alreadyHas.has(r.studentId));
+
+  if (toCreate.length > 0) {
+    await db.submission.createMany({
+      data: toCreate.map((r) => ({
+        assignmentId,
+        studentId: r.studentId,
+        status: 'NotStarted',
+      })),
+    });
+  }
+
+  await recordAuditEvent({
+    actorId,
+    action: 'assignment.publish',
+    entityType: 'Assignment',
+    entityId: assignmentId,
+    before,
+    after: assignment,
+    metadata: { submissionsCreated: roster.length },
+  });
+
+  await enqueueJob(
+    'EmailNotification',
+    { assignmentId, studentIds: roster.map((r) => r.studentId), title: assignment.title },
+    { classSectionId: before.classSectionId, assignmentId }
+  );
+
+  revalidatePath('/sections/' + before.classSectionId);
+  revalidatePath('/sections/' + before.classSectionId + '/gradebook');
+  return { success: true, submissionsCreated: roster.length };
+}
+
+/**
+ * 7d. Close an Assignment (stops accepting work; grading continues).
+ */
+export async function closeAssignmentAction(assignmentId: string, actorId: string) {
+  const before = await db.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+
+  const transition = validateAssignmentTransition(before.status, 'Closed');
+  if (!transition.isValid) {
+    throw new Error(transition.reason || 'Illegal assignment transition.');
+  }
+
+  const assignment = await db.assignment.update({
+    where: { id: assignmentId },
+    data: { status: 'Closed' },
+  });
+
+  await recordAuditEvent({
+    actorId,
+    action: 'assignment.close',
+    entityType: 'Assignment',
+    entityId: assignmentId,
+    before,
+    after: assignment,
+  });
+
+  revalidatePath('/sections/' + before.classSectionId);
+  return assignment;
 }
 
 /**

@@ -6,7 +6,11 @@ import {
   saveGradeAction,
   recordAttendanceAction,
   runAgentAction,
+  createAssignmentAction,
+  publishAssignmentAction,
+  closeAssignmentAction,
 } from '../../actions';
+import { ASSIGNMENT_TYPES } from '@/domain/rules/assignments';
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
 
@@ -41,6 +45,16 @@ export default async function SectionDetailPage({ params }: { params: { id: stri
   });
 
   const ungradedSubmissions = submissions.filter((s) => s.status === 'Submitted');
+
+  // Per-assignment tallies for the coursework card. Built from the submissions
+  // already in memory rather than a count query per assignment — the section
+  // page would otherwise fire one query per row.
+  const submissionsByAssignment = submissions.reduce<Record<string, typeof submissions>>((acc, s) => {
+    (acc[s.assignmentId] ||= []).push(s);
+    return acc;
+  }, {});
+
+  const canManageCoursework = ['Admin', 'SchoolManager', 'Teacher'].includes(activeUser.role);
 
   // Load latest anomaly agent runs on this section
   const latestRuns = await db.agentRun.findMany({
@@ -83,6 +97,29 @@ export default async function SectionDetailPage({ params }: { params: { id: stri
       records,
       actorId: activeUser.id,
     });
+  }
+
+  async function handleCreateAssignment(formData: FormData) {
+    'use server';
+    await createAssignmentAction({
+      classSectionId: sectionId,
+      title: formData.get('title') as string,
+      description: (formData.get('description') as string) || '',
+      type: formData.get('type') as string,
+      pointsPossible: Number(formData.get('pointsPossible')),
+      dueDate: formData.get('dueDate') as string,
+      actorId: activeUser.id,
+    });
+  }
+
+  async function handlePublishAssignment(formData: FormData) {
+    'use server';
+    await publishAssignmentAction(formData.get('assignmentId') as string, activeUser.id);
+  }
+
+  async function handleCloseAssignment(formData: FormData) {
+    'use server';
+    await closeAssignmentAction(formData.get('assignmentId') as string, activeUser.id);
   }
 
   async function handleRunAnomalyAgent() {
@@ -209,6 +246,147 @@ export default async function SectionDetailPage({ params }: { params: { id: stri
                     </tbody>
                   </table>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* COURSEWORK: ASSIGNMENT LIFECYCLE MANAGEMENT */}
+          <div className="card">
+            <h3 style={{ fontSize: '1.1rem', marginBottom: '8px' }}>📋 Coursework</h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '20px' }}>
+              Assignments move <code>Draft → Published → Closed</code>. Publishing is the
+              irreversible step: it creates a submission row for every enrolled student, so the
+              roster can be graded.
+            </p>
+
+            {section.assignments.length === 0 ? (
+              <div style={{
+                padding: '24px',
+                textAlign: 'center',
+                backgroundColor: 'var(--color-bg)',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px dashed var(--color-border)',
+                color: 'var(--color-text-muted)',
+                fontSize: '0.85rem',
+              }}>
+                No coursework yet. Create the first assignment below.
+              </div>
+            ) : (
+              <div className="table-wrapper" style={{ marginBottom: 0 }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Assignment</th>
+                      <th>Type</th>
+                      <th>Due</th>
+                      <th>Points</th>
+                      <th>Progress</th>
+                      <th>Status</th>
+                      <th>Lifecycle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {section.assignments.map((a) => {
+                      const subs = submissionsByAssignment[a.id] ?? [];
+                      const graded = subs.filter((s) => s.status === 'Graded' || s.status === 'Returned').length;
+                      const submitted = subs.filter((s) => s.status === 'Submitted').length;
+
+                      const statusBadge =
+                        a.status === 'Published' ? 'badge-success'
+                          : a.status === 'Closed' ? 'badge-neutral'
+                            : 'badge-warning';
+
+                      return (
+                        <tr key={a.id}>
+                          <td>
+                            <strong style={{ fontSize: '0.85rem' }}>{a.title}</strong>
+                            {a.description && (
+                              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                                {a.description.length > 70 ? a.description.slice(0, 70) + '…' : a.description}
+                              </div>
+                            )}
+                          </td>
+                          <td><span className="badge badge-info" style={{ fontSize: '0.65rem' }}>{a.type}</span></td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{formatDate(a.dueDate)}</td>
+                          <td>{a.pointsPossible}</td>
+                          <td style={{ fontSize: '0.8rem' }}>
+                            {a.status === 'Draft' ? (
+                              <span style={{ color: 'var(--color-text-light)' }}>—</span>
+                            ) : (
+                              <>
+                                <strong>{graded}</strong> graded
+                                {submitted > 0 && (
+                                  <span style={{ color: 'var(--color-warning-text)' }}> · {submitted} awaiting</span>
+                                )}
+                                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                                  of {subs.length} on roster
+                                </div>
+                              </>
+                            )}
+                          </td>
+                          <td><span className={`badge ${statusBadge}`}>{a.status}</span></td>
+                          <td>
+                            {!canManageCoursework ? (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--color-text-light)' }}>🔒</span>
+                            ) : a.status === 'Draft' ? (
+                              <form action={handlePublishAssignment}>
+                                <input type="hidden" name="assignmentId" value={a.id} />
+                                <button type="submit" className="btn btn-success btn-sm">Publish 🚀</button>
+                              </form>
+                            ) : a.status === 'Published' ? (
+                              <form action={handleCloseAssignment}>
+                                <input type="hidden" name="assignmentId" value={a.id} />
+                                <button type="submit" className="btn btn-secondary btn-sm">Close</button>
+                              </form>
+                            ) : (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>Final</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {canManageCoursework && (
+              <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid var(--color-border)' }}>
+                <h4 style={{ fontSize: '0.85rem', marginBottom: '12px' }}>➕ Create Assignment (saved as Draft)</h4>
+                <form action={handleCreateAssignment} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input name="title" className="form-control" placeholder="Algebra Homework 6: Quadratics" required style={{ flex: 2 }} />
+                    <select name="type" className="form-control" required style={{ flex: 1 }}>
+                      {ASSIGNMENT_TYPES.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input name="dueDate" type="date" className="form-control" required style={{ flex: 1, padding: '6px' }} />
+                    <input
+                      name="pointsPossible"
+                      type="number"
+                      className="form-control"
+                      placeholder="Points possible"
+                      defaultValue={100}
+                      min={1}
+                      required
+                      style={{ flex: 1 }}
+                    />
+                  </div>
+
+                  <textarea
+                    name="description"
+                    className="form-control"
+                    placeholder="Instructions for students..."
+                    rows={2}
+                    style={{ resize: 'none' }}
+                  />
+
+                  <button type="submit" className="btn btn-primary btn-sm">Save Draft</button>
+                </form>
               </div>
             )}
           </div>

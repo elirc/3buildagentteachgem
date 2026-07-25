@@ -1,6 +1,10 @@
 # User Stories — Product Backlog
 
-19 new feature tickets for the EduOps Platform, ordered easy → hard. None of these
+> **All 19 stories below have been implemented**, each on its own branch with its own pull
+> request. Read the story, form your own plan, then compare it against the PR that shipped
+> it — `gh pr list --state merged`. See [`04-what-changed.md`](04-what-changed.md).
+
+19 feature tickets for the EduOps Platform, ordered easy → hard. None of these
 duplicate the 10 stories in `docs/user-story-build-path/01-stories.md`.
 
 **Before you start any ticket:** read `01-how-this-app-works.md` and

@@ -245,6 +245,10 @@ npm run db:studio    # browse the database in a GUI
 After changing `prisma/schema.prisma`: run `npm run db:push` **and restart the dev
 server**, or the generated Prisma types will be stale.
 
+`prisma/dev.db` is generated and gitignored. Do not commit it — a binary that must stay in
+lockstep with the schema will drift, and a stale database produces `table does not exist`
+errors on every page that look exactly like application bugs.
+
 ---
 
 ## 9. Reading the history like a book

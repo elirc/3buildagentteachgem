@@ -13,8 +13,16 @@ next-env.d.ts
 dist/
 
 # Local database
-# NOTE: prisma/dev.db is intentionally NOT ignored. This is a teaching repo and the
-# seeded SQLite file is part of the fixture — `npm run db:seed` rebuilds it from scratch.
+#
+# prisma/dev.db WAS tracked, on the theory that shipping a seeded fixture makes the repo
+# runnable immediately. It does the opposite. A binary that has to stay in lockstep with
+# schema.prisma will drift the moment anyone runs `db push` without re-committing it, and
+# a stale .db is far more confusing than a missing one: every page 500s with a "table does
+# not exist" error that looks like a code bug.
+#
+# It is generated in two commands that the README already lists. Generated artefacts do
+# not belong in version control.
+prisma/dev.db
 prisma/dev.db-journal
 *.db-shm
 *.db-wal

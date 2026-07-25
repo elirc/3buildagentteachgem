@@ -3,7 +3,8 @@
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { db } from '@/db';
-import { runJob, enqueueJob } from '@/observability/jobs';
+import { getActiveUser } from '@/shared/auth';
+import { runJob, enqueueJob, requeueJob } from '@/observability/jobs';
 import { recordAuditEvent } from '@/observability/audit';
 import { executeAgentRun } from '@/agents/core/orchestrator';
 import { validateEnrollmentRules } from '@/domain/rules/enrollment';
@@ -24,6 +25,18 @@ export async function retryJobAction(jobId: string) {
   const result = await runJob(jobId);
   revalidatePath('/jobs');
   revalidatePath('/jobs/' + jobId);
+  revalidatePath('/');
+  return result;
+}
+
+/**
+ * 2b. Requeue a dead-lettered job (resets the attempt budget, does not execute).
+ */
+export async function requeueJobAction(jobId: string) {
+  const session = await getActiveUser();
+  const result = await requeueJob(jobId, session.id);
+  revalidatePath('/jobs');
+  revalidatePath('/');
   return result;
 }
 

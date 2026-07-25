@@ -1,5 +1,6 @@
 import { db } from '@/db';
 import { logger } from './logging';
+import { recordAuditEvent } from './audit';
 import { calculateSectionGrade } from '@/domain/rules/grades';
 
 export type JobType =
@@ -12,6 +13,34 @@ export type JobType =
   | 'AgentRun';
 
 export type JobStatus = 'Queued' | 'Running' | 'Succeeded' | 'Failed' | 'Retrying' | 'DeadLettered';
+
+/**
+ * The job lifecycle, written down.
+ *
+ * This map is documentation with teeth: it is the single place that answers
+ * "can a job in state X move to state Y?". Before this existed the rules were
+ * spread across runJob() and a `disabled` prop in the jobs page, and the two
+ * disagreed — the page let you retry a DeadLettered job, which runJob happily
+ * executed, pushing `attempts` past `maxAttempts`.
+ *
+ * Succeeded and DeadLettered are terminal. The only way out of DeadLettered is
+ * an explicit human requeue, which resets the attempt budget.
+ */
+export const JOB_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
+  Queued: ['Running'],
+  Running: ['Succeeded', 'Failed', 'DeadLettered'],
+  Failed: ['Running'],
+  Retrying: ['Running'],
+  Succeeded: [],
+  DeadLettered: ['Queued'], // requeue only
+};
+
+/** States a worker is allowed to pick up. */
+export const RUNNABLE_STATUSES: JobStatus[] = ['Queued', 'Failed', 'Retrying'];
+
+export function canRunJob(status: string): boolean {
+  return RUNNABLE_STATUSES.includes(status as JobStatus);
+}
 
 /**
  * Enqueues a job in the database.
@@ -57,6 +86,68 @@ export async function enqueueJob(
 }
 
 /**
+ * Moves a dead-lettered job back into the queue with a fresh attempt budget.
+ *
+ * This is deliberately a separate, explicit operation rather than a special case
+ * inside runJob. A dead letter means "we gave up on this and a human must look
+ * at it" — if the retry button could silently drain the dead-letter queue, the
+ * queue would not be telling you anything. Requeue is the human saying "I have
+ * looked, I believe the cause is fixed, try again."
+ *
+ * Note that it does NOT execute the job. Deciding to retry and actually
+ * retrying are two different actions, and conflating them means an operator who
+ * wanted to inspect the payload first has already run it.
+ */
+export async function requeueJob(jobId: string, actorId: string): Promise<{ success: boolean; reason?: string }> {
+  const before = await db.backgroundJob.findUnique({ where: { id: jobId } });
+
+  if (!before) {
+    return { success: false, reason: `Job ${jobId} not found.` };
+  }
+
+  if (!JOB_TRANSITIONS[before.status as JobStatus]?.includes('Queued')) {
+    await logger.warn({
+      service: 'JobQueue',
+      message: `Refusing to requeue job [${jobId}]: status [${before.status}] cannot transition to Queued`,
+      entityType: 'BackgroundJob',
+      entityId: jobId,
+    });
+    return { success: false, reason: `A job in status "${before.status}" cannot be requeued.` };
+  }
+
+  const after = await db.backgroundJob.update({
+    where: { id: jobId },
+    data: {
+      status: 'Queued',
+      attempts: 0,
+      errorMessage: null,
+      startedAt: null,
+      finishedAt: null,
+    },
+  });
+
+  await recordAuditEvent({
+    actorId,
+    action: 'job.requeue',
+    entityType: 'BackgroundJob',
+    entityId: jobId,
+    before,
+    after,
+    metadata: { previousAttempts: before.attempts, previousError: before.errorMessage },
+  });
+
+  await logger.info({
+    service: 'JobQueue',
+    message: `Job [${jobId}] requeued by [${actorId}] after ${before.attempts} failed attempts`,
+    entityType: 'BackgroundJob',
+    entityId: jobId,
+    userId: actorId,
+  });
+
+  return { success: true };
+}
+
+/**
  * Worker execution simulation.
  * Resolves a specific job ID by running the associated mock or real logic.
  */
@@ -67,6 +158,20 @@ export async function runJob(jobId: string): Promise<boolean> {
 
   if (!job) {
     throw new Error(`Job ${jobId} not found.`);
+  }
+
+  // Refuse work the state machine forbids. Returning false rather than throwing
+  // keeps the existing boolean contract with retryJobAction: a UI that races the
+  // worker should get "nothing happened", not a 500.
+  if (!canRunJob(job.status)) {
+    await logger.warn({
+      service: 'BackgroundJobWorker',
+      message: `Refusing to execute job [${job.id}]: status [${job.status}] is not runnable`,
+      entityType: 'BackgroundJob',
+      entityId: job.id,
+      metadata: { status: job.status, runnable: RUNNABLE_STATUSES },
+    });
+    return false;
   }
 
   // Mark job as Running

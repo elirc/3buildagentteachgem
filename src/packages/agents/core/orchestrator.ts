@@ -7,6 +7,7 @@ import { runAttendanceAnomalyAgent } from '../registry/AttendanceAnomalyAgent';
 import { runTeacherWorkloadInsightAgent } from '../registry/TeacherWorkloadInsightAgent';
 import { logger } from '@/observability/logging';
 import { recordAuditEvent } from '@/observability/audit';
+import { notifyAgentRecommendations } from '@/observability/notifications';
 import { calculateSectionGrade } from '@/domain/rules/grades';
 
 /**
@@ -358,6 +359,34 @@ export async function executeAgentRun(params: {
       entityType: 'AgentRun',
       entityId: runRecord.id,
     });
+
+    // Fan urgent recommendations out to whoever owns them.
+    //
+    // Inside its own try/catch on purpose: a notification is an aside. The run
+    // has already succeeded and been persisted, and failing it now because an
+    // alert could not be delivered would throw away the analysis over a
+    // side effect.
+    try {
+      await notifyAgentRecommendations({
+        runId: runRecord.id,
+        agentType,
+        targetType,
+        targetId,
+        recommendations: runResult.output.recommendations,
+        subjectName: (inputSnapshot as any)?.student
+          ? `${(inputSnapshot as any).student.firstName} ${(inputSnapshot as any).student.lastName}`
+          : (inputSnapshot as any)?.teacher
+            ? `${(inputSnapshot as any).teacher.firstName} ${(inputSnapshot as any).teacher.lastName}`
+            : undefined,
+      });
+    } catch (notifyError) {
+      await logger.error({
+        service: 'AgentEngine',
+        message: `Agent Run [${runRecord.id}] succeeded but notification fan-out failed: ${(notifyError as Error).message}`,
+        entityType: 'AgentRun',
+        entityId: runRecord.id,
+      });
+    }
 
     return runRecord.id;
   } catch (err) {

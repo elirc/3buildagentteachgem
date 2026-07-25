@@ -152,7 +152,10 @@ export default async function SectionDetailPage({ params }: { params: { id: stri
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '16px', fontSize: '0.85rem', textAlign: 'right' }}>
+        <div style={{ display: 'flex', gap: '16px', fontSize: '0.85rem', textAlign: 'right', alignItems: 'center' }}>
+          <Link href={`/sections/${sectionId}/gradebook`} className="btn btn-secondary btn-sm">
+            📊 Open Gradebook
+          </Link>
           <div>
             <span style={{ display: 'block', color: 'var(--color-text-muted)', fontSize: '0.7rem', textTransform: 'uppercase' }}>Enrolled</span>
             <strong style={{ fontSize: '1.2rem' }}>{enrolled.length} / {section.capacity}</strong>

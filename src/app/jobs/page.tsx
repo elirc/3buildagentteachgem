@@ -2,7 +2,7 @@ import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
 import { formatDateTime, canPerformAction, lockMessage } from '@/shared';
-import { retryJobAction, requeueJobAction, processQueueAction } from '../actions';
+import { retryJobAction, requeueJobAction, processQueueAction, enqueueCourseworkSweepAction } from '../actions';
 import { canRunJob } from '@/observability/jobs';
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
@@ -28,6 +28,11 @@ export default async function BackgroundJobsPage() {
   async function handleProcessQueue() {
     'use server';
     await processQueueAction();
+  }
+
+  async function handleCourseworkSweep() {
+    'use server';
+    await enqueueCourseworkSweepAction();
   }
 
   // Fetch background jobs
@@ -74,11 +79,22 @@ export default async function BackgroundJobsPage() {
         ))}
 
         {canPerformAction(activeUser.role, 'job.process') && (
-          <form action={handleProcessQueue} style={{ marginLeft: 'auto' }}>
-            <button type="submit" className="btn btn-primary btn-sm" disabled={runnableCount === 0}>
-              ▶️ Process queue ({runnableCount})
-            </button>
-          </form>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+            <form action={handleCourseworkSweep}>
+              <button
+                type="submit"
+                className="btn btn-secondary btn-sm"
+                title="Queue a sweep that marks overdue work Missing or Late"
+              >
+                🧹 Queue coursework sweep
+              </button>
+            </form>
+            <form action={handleProcessQueue}>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={runnableCount === 0}>
+                ▶️ Process queue ({runnableCount})
+              </button>
+            </form>
+          </div>
         )}
       </div>
 

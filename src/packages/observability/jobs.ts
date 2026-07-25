@@ -2,6 +2,7 @@ import { db } from '@/db';
 import { logger } from './logging';
 import { recordAuditEvent } from './audit';
 import { calculateSectionGrade } from '@/domain/rules/grades';
+import { resolveSubmissionStatus } from '@/domain/rules/coursework';
 
 export type JobType =
   | 'EmailNotification'
@@ -10,6 +11,7 @@ export type JobType =
   | 'ReportGeneration'
   | 'EnrollmentSync'
   | 'GuardianDigest'
+  | 'CourseworkSweep'
   | 'AgentRun';
 
 export type JobStatus = 'Queued' | 'Running' | 'Succeeded' | 'Failed' | 'Retrying' | 'DeadLettered';
@@ -312,6 +314,103 @@ export async function runJob(jobId: string): Promise<boolean> {
             data: { finalGrade: calculated.percentage },
           });
         }
+        break;
+      }
+
+      case 'CourseworkSweep': {
+        const now = new Date();
+
+        // Only assignments that are live and overdue. Drafts have no submission
+        // rows at all, and anything not yet due cannot be late.
+        const overdue = await db.assignment.findMany({
+          where: { status: { in: ['Published', 'Closed'] }, dueDate: { lt: now } },
+          select: { id: true, dueDate: true, classSectionId: true },
+          take: 500, // bounded: a sweep must not become an unbounded table scan
+        });
+
+        if (overdue.length === 0) {
+          await logger.info({
+            service: 'BackgroundJobWorker',
+            message: 'Coursework sweep: no overdue assignments to scan',
+            entityType: 'BackgroundJob',
+            entityId: job.id,
+          });
+          break;
+        }
+
+        const dueById = new Map(overdue.map((a) => [a.id, a]));
+
+        const submissions = await db.submission.findMany({
+          where: {
+            assignmentId: { in: overdue.map((a) => a.id) },
+            // Graded/Returned work is excluded in the query as well as in the
+            // rule. Cheaper, and it keeps a teacher's judgement out of reach of
+            // the sweep even if the rule were ever loosened.
+            status: { notIn: ['Graded', 'Returned'] },
+          },
+          select: { id: true, status: true, submittedAt: true, assignmentId: true },
+        });
+
+        const toMissing: string[] = [];
+        const toLate: string[] = [];
+        const affectedSections = new Set<string>();
+
+        for (const sub of submissions) {
+          const assignment = dueById.get(sub.assignmentId);
+          if (!assignment) continue;
+
+          const next = resolveSubmissionStatus({
+            current: sub.status,
+            dueDate: assignment.dueDate,
+            submittedAt: sub.submittedAt,
+            now,
+          });
+
+          if (next === 'Missing') toMissing.push(sub.id);
+          else if (next === 'Late') toLate.push(sub.id);
+          else continue;
+
+          affectedSections.add(assignment.classSectionId);
+        }
+
+        if (toMissing.length > 0) {
+          await db.submission.updateMany({ where: { id: { in: toMissing } }, data: { status: 'Missing' } });
+        }
+        if (toLate.length > 0) {
+          await db.submission.updateMany({ where: { id: { in: toLate } }, data: { status: 'Late' } });
+        }
+
+        // updateMany does not return the changed rows, so per-row audit events
+        // are not available from it. One summary event per sweep is the honest
+        // alternative: it records what the system did without inventing
+        // per-record provenance the query cannot supply.
+        if (toMissing.length + toLate.length > 0) {
+          await recordAuditEvent({
+            actorId: 'system',
+            action: 'coursework.sweep',
+            entityType: 'BackgroundJob',
+            entityId: job.id,
+            after: {
+              markedMissing: toMissing.length,
+              markedLate: toLate.length,
+              sectionsAffected: [...affectedSections],
+            },
+          });
+        }
+
+        // One recalculation per section, not per submission.
+        for (const sectionId of affectedSections) {
+          await enqueueJob('GradeRecalculation', { sectionId }, { classSectionId: sectionId });
+        }
+
+        await logger.info({
+          service: 'BackgroundJobWorker',
+          message: `Coursework sweep: scanned ${overdue.length} overdue assignments, marked ${toMissing.length} missing and ${toLate.length} late across ${affectedSections.size} sections`,
+          entityType: 'BackgroundJob',
+          entityId: job.id,
+          metadata: { markedMissing: toMissing.length, markedLate: toLate.length },
+        });
+
         break;
       }
 

@@ -148,6 +148,88 @@ export async function requeueJob(jobId: string, actorId: string): Promise<{ succ
 }
 
 /**
+ * Atomically claims a job for execution.
+ *
+ * This is the whole reason a queue is not just "SELECT then UPDATE". Two
+ * workers reading the same Queued row would both see it as runnable and both
+ * execute it. The guard has to live in the WHERE clause of the write, so the
+ * database decides the winner:
+ *
+ *   updateMany({ where: { id, status: { in: RUNNABLE } }, ... })
+ *
+ * updateMany returns a count. Exactly one caller sees count === 1; everyone
+ * else sees 0 because the row no longer matches the status filter. `update`
+ * could not express this — it matches on the id alone and would happily
+ * overwrite a row another worker had already claimed.
+ *
+ * SQLite serialises writers, so this is airtight here. On Postgres the same
+ * statement is still atomic, though a busy queue would want SKIP LOCKED.
+ */
+export async function claimJob(jobId: string): Promise<boolean> {
+  const result = await db.backgroundJob.updateMany({
+    where: { id: jobId, status: { in: RUNNABLE_STATUSES } },
+    data: {
+      status: 'Running',
+      attempts: { increment: 1 },
+      startedAt: new Date(),
+      errorMessage: null,
+    },
+  });
+
+  return result.count === 1;
+}
+
+export interface QueueRunSummary {
+  processed: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+}
+
+/**
+ * Drains up to `limit` runnable jobs, oldest first.
+ *
+ * `limit` is deliberately small. Several job types sleep 500ms to simulate
+ * latency, so a large batch turns one HTTP request into a minute of blocking —
+ * and SQLite has a single writer, so a long loop holds the write lock against
+ * every page render. A real deployment runs this in a worker process on a
+ * timer; here it is a button, and the button must return promptly.
+ */
+export async function processQueue(limit = 20): Promise<QueueRunSummary> {
+  const candidates = await db.backgroundJob.findMany({
+    where: { status: { in: RUNNABLE_STATUSES } },
+    orderBy: { createdAt: 'asc' }, // FIFO: the oldest work has waited longest
+    select: { id: true },
+    take: limit,
+  });
+
+  const summary: QueueRunSummary = { processed: 0, succeeded: 0, failed: 0, skipped: 0 };
+
+  for (const { id } of candidates) {
+    // runJob claims internally, so a job taken by someone else since the
+    // candidate query simply returns false here.
+    const before = await db.backgroundJob.findUnique({ where: { id }, select: { status: true } });
+    if (!before || !canRunJob(before.status)) {
+      summary.skipped++;
+      continue;
+    }
+
+    const ok = await runJob(id);
+    summary.processed++;
+    if (ok) summary.succeeded++;
+    else summary.failed++;
+  }
+
+  await logger.info({
+    service: 'BackgroundJobWorker',
+    message: `Queue drain complete: processed ${summary.processed}, succeeded ${summary.succeeded}, failed ${summary.failed}, skipped ${summary.skipped}`,
+    metadata: { ...summary, limit },
+  });
+
+  return summary;
+}
+
+/**
  * Worker execution simulation.
  * Resolves a specific job ID by running the associated mock or real logic.
  */
@@ -174,16 +256,19 @@ export async function runJob(jobId: string): Promise<boolean> {
     return false;
   }
 
-  // Mark job as Running
-  await db.backgroundJob.update({
-    where: { id: jobId },
-    data: {
-      status: 'Running',
-      attempts: { increment: 1 },
-      startedAt: new Date(),
-      errorMessage: null,
-    },
-  });
+  // Claim the job before doing any work. If the claim fails, another worker
+  // already took it between our read and our write — that is a normal outcome,
+  // not an error.
+  const claimed = await claimJob(jobId);
+  if (!claimed) {
+    await logger.warn({
+      service: 'BackgroundJobWorker',
+      message: `Job [${jobId}] was claimed by another worker; skipping`,
+      entityType: 'BackgroundJob',
+      entityId: jobId,
+    });
+    return false;
+  }
 
   await logger.info({
     service: 'BackgroundJobWorker',

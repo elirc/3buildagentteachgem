@@ -1,6 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
+import { buildStudentScope, describeStudentScope } from '@/shared/scope';
 import { formatDate, getRiskBadgeStyle, canPerformAction, lockMessage } from '@/shared';
 import { calculateSectionGrade } from '@/domain/rules/grades';
 import { calculateStudentRisk } from '@/domain/rules/risk';
@@ -50,7 +51,13 @@ export default async function StudentsListPage() {
   }
 
   // Fetch students with all details
+  // Scoped in the WHERE clause, not filtered afterwards. A post-fetch filter
+  // silently breaks the moment someone adds a take() or a count().
+  const scope = buildStudentScope(activeUser);
+  const scopeNote = describeStudentScope(activeUser);
+
   const students = await db.student.findMany({
+    where: scope,
     include: {
       attendance: true,
       submissions: { include: { assignment: true } },
@@ -95,6 +102,11 @@ export default async function StudentsListPage() {
         <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
           Monitor active student enrollment status, cumulative gradebook averages, absences, and real-time risk indicators.
         </p>
+        {scopeNote && (
+          <p style={{ margin: '6px 0 0 0', fontSize: '0.8rem', color: 'var(--color-primary)', fontWeight: 600 }}>
+            🔒 {scopeNote}
+          </p>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: '32px' }}>

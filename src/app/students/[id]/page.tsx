@@ -12,6 +12,9 @@ import {
   createInterventionPlanAction,
 } from '../../actions';
 import { buildStudentTimeline, type TimelineKind } from '@/observability/timeline';
+import { buildStudentScope } from '@/shared/scope';
+import { logger } from '@/observability/logging';
+import Forbidden from '../../components/Forbidden';
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
 
@@ -41,9 +44,14 @@ export default async function StudentDetailPage({
     timelineFilter.kinds.includes(e.kind)
   );
 
-  // 1. Fetch Student facts
-  const student = await db.student.findUniqueOrThrow({
-    where: { id: studentId },
+  // 1. Fetch Student facts — WITHIN the caller's scope.
+  //
+  // findFirst with the scope spread into the where clause, not
+  // findUniqueOrThrow followed by a check. Fetching the record and then
+  // deciding leaks its existence through timing and error messages; here an
+  // unauthorised id is indistinguishable from a nonexistent one.
+  const student = await db.student.findFirst({
+    where: { id: studentId, ...buildStudentScope(activeUser) },
     include: {
       user: true,
       advisor: true,
@@ -54,6 +62,20 @@ export default async function StudentDetailPage({
       interventionPlans: true,
     },
   });
+
+  // No row means either "no such student" or "not yours" — and this page
+  // deliberately cannot tell the difference, so it cannot leak it.
+  if (!student) {
+    await logger.warn({
+      service: 'AccessControl',
+      message: `Denied student profile access: [${activeUser.role}] ${activeUser.id} requested student ${studentId}`,
+      entityType: 'Student',
+      entityId: studentId,
+      userId: activeUser.id,
+    });
+
+    return <Forbidden role={activeUser.role} what="this student's file" />;
+  }
 
   // Calculate overall average and risk
   const gradeCalc = calculateSectionGrade(

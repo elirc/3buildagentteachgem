@@ -1,6 +1,7 @@
 import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
+import { buildStudentScope, describeStudentScope } from '@/shared/scope';
 import { formatDate, canPerformAction, lockMessage } from '@/shared';
 import { recordAuditEvent } from '@/observability/audit';
 import { revalidatePath } from 'next/cache';
@@ -39,7 +40,12 @@ export default async function InterventionsListPage() {
   }
 
   // Fetch all intervention plans
+  // Plans are scoped through their student, so the same rule governs both
+  // pages and there is no second definition of "who may I see?".
+  const scopeNote = describeStudentScope(activeUser);
+
   const plans = await db.interventionPlan.findMany({
+    where: { student: buildStudentScope(activeUser) },
     include: {
       student: true,
       createdByUser: true,
@@ -57,6 +63,11 @@ export default async function InterventionsListPage() {
         <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
           Coordinate customized academic tutoring schedules, address absenteeism trends, and review active counseling case histories.
         </p>
+        {scopeNote && (
+          <p style={{ margin: '6px 0 0 0', fontSize: '0.8rem', color: 'var(--color-primary)', fontWeight: 600 }}>
+            🔒 {scopeNote}
+          </p>
+        )}
       </div>
 
       <div className="table-wrapper">

@@ -12,6 +12,8 @@ import {
   promoteWaitlistAction,
 } from '../../actions';
 import { ASSIGNMENT_TYPES } from '@/domain/rules/assignments';
+import { isUnscopedRole } from '@/shared/scope';
+import Forbidden from '../../components/Forbidden';
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
 
@@ -39,6 +41,14 @@ export default async function SectionDetailPage({
       assignments: { orderBy: { dueDate: 'asc' } },
     },
   });
+
+  // A section page shows the whole roster: every classmate's name, student
+  // number and running average. That is other people's data, so the roles whose
+  // student access is scoped to themselves or their own child have no business
+  // here at all.
+  if (['Student', 'Parent'].includes(activeUser.role)) {
+    return <Forbidden role={activeUser.role} what="a full class roster" />;
+  }
 
   // Calculate enrolled vs waitlisted
   const enrolled = section.enrollments.filter((e) => e.status === 'Enrolled');

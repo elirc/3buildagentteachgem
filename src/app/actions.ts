@@ -4,7 +4,7 @@ import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
-import { runJob, enqueueJob, requeueJob } from '@/observability/jobs';
+import { runJob, enqueueJob, requeueJob, processQueue } from '@/observability/jobs';
 import { recordAuditEvent } from '@/observability/audit';
 import { executeAgentRun } from '@/agents/core/orchestrator';
 import { validateEnrollmentRules } from '@/domain/rules/enrollment';
@@ -42,6 +42,22 @@ export async function requeueJobAction(jobId: string) {
   revalidatePath('/jobs');
   revalidatePath('/');
   return result;
+}
+
+/**
+ * 2c. Drain the job queue.
+ *
+ * In production this is a worker process on a timer, not a button. The button
+ * exists so the queue is observable: you can watch a job move Queued -> Running
+ * -> Succeeded and see the grades change as a result.
+ */
+export async function processQueueAction() {
+  const summary = await processQueue();
+  revalidatePath('/jobs');
+  revalidatePath('/');
+  revalidatePath('/students');
+  revalidatePath('/sections');
+  return summary;
 }
 
 /**

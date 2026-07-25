@@ -2,7 +2,7 @@ import React from 'react';
 import { db } from '@/db';
 import { getActiveUser } from '@/shared/auth';
 import { formatDateTime } from '@/shared';
-import { retryJobAction, requeueJobAction } from '../actions';
+import { retryJobAction, requeueJobAction, processQueueAction } from '../actions';
 import { canRunJob } from '@/observability/jobs';
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
@@ -25,6 +25,11 @@ export default async function BackgroundJobsPage() {
     await requeueJobAction(jobId);
   }
 
+  async function handleProcessQueue() {
+    'use server';
+    await processQueueAction();
+  }
+
   // Fetch background jobs
   const jobs = await db.backgroundJob.findMany({
     orderBy: { createdAt: 'desc' },
@@ -37,6 +42,7 @@ export default async function BackgroundJobsPage() {
     return acc;
   }, {});
   const deadLetteredCount = depth['DeadLettered'] ?? 0;
+  const runnableCount = jobs.filter((j) => canRunJob(j.status)).length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -66,7 +72,27 @@ export default async function BackgroundJobsPage() {
             </span>
           </div>
         ))}
+
+        {['Admin', 'SchoolManager'].includes(activeUser.role) && (
+          <form action={handleProcessQueue} style={{ marginLeft: 'auto' }}>
+            <button type="submit" className="btn btn-primary btn-sm" disabled={runnableCount === 0}>
+              ▶️ Process queue ({runnableCount})
+            </button>
+          </form>
+        )}
       </div>
+
+      {runnableCount > 0 && (
+        <div style={{
+          padding: '12px 16px', backgroundColor: 'var(--color-warning-bg)',
+          border: '1px solid var(--color-warning)', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem',
+        }}>
+          <strong>{runnableCount} job{runnableCount === 1 ? '' : 's'} waiting.</strong>{' '}
+          Nothing drains this queue automatically — in production a worker process would poll it on
+          a timer. Until you press <strong>Process queue</strong>, enqueued <code>GradeRecalculation</code> work
+          has not run, which is why <code>Enrollment.finalGrade</code> can look stale.
+        </div>
+      )}
 
       {deadLetteredCount > 0 && (
         <div style={{

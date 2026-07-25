@@ -39,10 +39,15 @@ commit here follows and why each convention exists.
 
 ```bash
 npm install
-npm run db:push      # sync prisma/schema.prisma -> prisma/dev.db
-npm run db:seed      # WIPES the db and rebuilds the demo scenario
+npm run db:push      # creates prisma/dev.db from schema.prisma
+npm run db:seed      # populates the demo scenario
 npm run dev          # http://localhost:3000
 ```
+
+All four steps are required on a fresh clone. `prisma/dev.db` is **not** in the repository
+— it is a generated artefact, and `db:push` + `db:seed` rebuild it deterministically in
+about two seconds. (It used to be committed. See
+[`fabledocs/04-what-changed.md`](fabledocs/04-what-changed.md) for why that was a mistake.)
 
 There is no login. Use the **role switcher in the top-right header** to become an Admin, a
 School Manager, a Teacher, an Advisor, a Student or a Parent, and watch permissions and
@@ -58,6 +63,9 @@ visible data change underneath you.
 
 > After changing `prisma/schema.prisma`, run `npm run db:push` **and restart the dev
 > server** — otherwise the generated Prisma types are stale.
+>
+> If a page fails with `The table main.X does not exist`, your database is behind the
+> schema: run `npm run db:push`.
 
 ---
 

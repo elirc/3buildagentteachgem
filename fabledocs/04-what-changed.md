@@ -68,6 +68,33 @@ plus `selectWaitlistPromotion` in `enrollment.ts` and the ordering helpers in `r
 
 ---
 
+## A bug the build itself created
+
+Worth recording, because it is the most realistic thing in this repository.
+
+`prisma/dev.db` was committed on the theory that a seeded fixture makes the repo runnable
+immediately. Stories 17 and 18 each added a model and ran `prisma db push`, which changed
+that binary — and the merge tooling restored it from git every time. The result: the
+repository shipped a **15-table database against a 17-table schema**.
+
+Nothing caught it. Not `tsc`, not `next build`, not 129 unit tests — because every one of
+those checks reads the *schema*, and the schema was correct. Only starting the app found
+it, and it failed loudly: every page 500ing with
+`The table main.Notification does not exist`, thrown from the layout's notification count.
+
+Two lessons:
+
+1. **A generated artefact in version control is a liability.** `dev.db` is now gitignored;
+   `db:push` + `db:seed` rebuild it in about two seconds, and those commands were already
+   in the README.
+2. **A green build is not a running application.** Type checks and unit tests verify the
+   things they can see. Starting the process is a different question, and it is the one a
+   user asks first.
+
+Fixed in `fix/21-database-fixture-drift`.
+
+---
+
 ## Where the teaching value is
 
 If you read one thing, read the **pull requests**. Each has a `## Why` section naming the

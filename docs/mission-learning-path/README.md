@@ -1,5 +1,12 @@
 # Mission Learning Path Suite
 
+> **Before you start (2026-10-06):** missions cite exact files and line
+> ranges, and the tree has moved since they were written — the 19-story
+> fabledocs backlog (PRs #1–#22) landed afterwards. Treat line ranges as
+> landmarks and search for the named symbol if a range looks off. Known
+> doc-vs-code drift is listed in `fabledocs/02-codebase-gotchas.md`
+> ("Documentation drift") and reconciled in `fabledocs/04-what-changed.md`.
+
 Welcome to the Mission Learning Path. This suite is not documentation to be read passively; it is an active training campaign. You are not reading—you are executing missions to build your muscle memory and intuition within this specific codebase.
 
 ## How to Use This Suite

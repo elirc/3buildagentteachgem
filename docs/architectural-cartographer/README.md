@@ -1,5 +1,15 @@
 # Architectural Cartographer Suite
 
+> **Before you start (2026-10-06):** this suite was written against an
+> earlier tree. Since then the 19-story fabledocs backlog shipped (PRs
+> #1–#22), and a few exercises across the `docs/` suites reference fields or
+> functions that never existed — the verified list is in
+> `fabledocs/02-codebase-gotchas.md` under "Documentation drift", and
+> `fabledocs/04-what-changed.md` says which findings still stand. When this
+> suite and `prisma/schema.prisma` disagree, the schema wins. If you are new
+> here, read `fabledocs/01-how-this-app-works.md` first and treat this suite
+> as the guided deep-dive that follows it.
+
 Welcome to the Architectural Cartographer Suite for the Agentic Education Operations platform. This suite is designed to be your primary technical onboarding manual, written from the perspective of a senior engineer mentoring a developer they genuinely want to see succeed. 
 
 ## Purpose

@@ -1,5 +1,13 @@
 # User Story Build Path
 
+> **Status (2026-10-06):** these 10 stories are separate from the 19-story
+> fabledocs backlog, which has shipped in full (PRs #1–#22,
+> `fabledocs/04-what-changed.md`). The fabledocs backlog was deliberately
+> written not to overlap these 10, so they remain open build exercises —
+> but the codebase has grown since they were written, so before building
+> one, search the code and PR list for the feature area first, and prefer
+> extending a shipped pattern over inventing a parallel one.
+
 Welcome to your first sprint. This suite contains a progressive set of 10 user stories—real features that a user of the Agentic Education Operations platform would actually want. 
 
 ## How to Use These Stories
